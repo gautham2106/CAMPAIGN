@@ -1171,12 +1171,16 @@ export default function ConstituencyAdminPage() {
           <div className="space-y-3">
             {monitors.map(m => {
               const assignedCount = agents.filter(a => a.assigned_monitor_id === m.id).length
+              const digits = m.phone?.replace(/\D/g, '')
               return (
                 <div key={m.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-900">{m.full_name}</p>
                       <p className="text-xs text-slate-500 mt-0.5">{m.email}</p>
+                      {m.phone && (
+                        <p className="text-xs text-slate-600 font-medium mt-0.5">{m.phone}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
@@ -1188,12 +1192,28 @@ export default function ConstituencyAdminPage() {
                         onClick={() => handleDeleteMonitor(m)}
                         disabled={deletingMonitorId === m.id}
                         className="text-red-400 hover:text-red-600 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors disabled:opacity-40 border border-red-200"
-                        title="Delete monitor"
                       >
                         {deletingMonitorId === m.id ? '…' : 'Delete'}
                       </button>
                     </div>
                   </div>
+
+                  {/* Contact buttons */}
+                  {digits && (
+                    <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                      <a href={`tel:+${digits}`}
+                        className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                        📞 Call
+                      </a>
+                      <a href={`https://wa.me/${digits}`} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                        💬 WhatsApp
+                      </a>
+                    </div>
+                  )}
+                  {!m.phone && (
+                    <p className="text-xs text-orange-500 mt-2">No phone number — add via Supabase or edit profile</p>
+                  )}
                 </div>
               )
             })}

@@ -15,10 +15,14 @@ CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT,
   email TEXT,
+  phone TEXT,
   role TEXT NOT NULL CHECK (role IN ('super_admin', 'constituency_admin', 'monitor')),
   constituency_id UUID REFERENCES constituencies(id),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- If upgrading an existing database, run this migration:
+-- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS phone TEXT;
 
 -- 3. DIGITAL AGENTS
 CREATE TABLE IF NOT EXISTS digital_agents (
