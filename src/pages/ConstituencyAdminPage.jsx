@@ -165,10 +165,13 @@ export default function ConstituencyAdminPage() {
   const [deletingAgentId, setDeletingAgentId] = useState(null)
   const [deletingMonitorId, setDeletingMonitorId] = useState(null)
 
-  // Agents tab: search + bulk + inline edit
+  // Agents tab: search + filter + bulk + inline edit
   const [agentSearch, setAgentSearch] = useState('')
+  const [filterMonitorId, setFilterMonitorId] = useState('') // '' = all, 'unassigned' = no monitor
   const [selectedAgentIds, setSelectedAgentIds] = useState(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [reassignTargetId, setReassignTargetId] = useState('')
+  const [bulkReassigning, setBulkReassigning] = useState(false)
   const [editingAgentId, setEditingAgentId] = useState(null)
   const [editAgentValues, setEditAgentValues] = useState({})
   const [savingEdit, setSavingEdit] = useState(false)
@@ -355,6 +358,18 @@ export default function ConstituencyAdminPage() {
     loadBase()
   }
 
+  async function handleBulkReassign() {
+    if (selectedAgentIds.size === 0 || !reassignTargetId) return
+    setBulkReassigning(true)
+    const newMonitorId = reassignTargetId === 'unassigned' ? null : reassignTargetId
+    const { error } = await supabase.from('digital_agents')
+      .update({ assigned_monitor_id: newMonitorId })
+      .in('id', [...selectedAgentIds])
+    if (error) setError(error.message)
+    else { setSelectedAgentIds(new Set()); setReassignTargetId(''); loadBase() }
+    setBulkReassigning(false)
+  }
+
   async function handleBulkDelete() {
     if (selectedAgentIds.size === 0) return
     if (!confirm(`Permanently delete ${selectedAgentIds.size} agent(s)? This also removes their compliance logs.`)) return
@@ -436,17 +451,20 @@ export default function ConstituencyAdminPage() {
   const unassigned = agents.filter(a => !a.assigned_monitor_id)
   const isToday = selectedDate === TODAY
 
-  const filteredAgents = agentSearch.trim()
-    ? agents.filter(a => {
-        const q = agentSearch.toLowerCase()
-        return (
-          a.name?.toLowerCase().includes(q) ||
-          String(a.booth_number ?? '').includes(q) ||
-          a.phone?.includes(q) ||
-          a.area?.toLowerCase().includes(q)
-        )
-      })
-    : agents
+  const filteredAgents = agents.filter(a => {
+    // Monitor filter
+    if (filterMonitorId === 'unassigned' && a.assigned_monitor_id) return false
+    if (filterMonitorId && filterMonitorId !== 'unassigned' && a.assigned_monitor_id !== filterMonitorId) return false
+    // Search filter
+    if (!agentSearch.trim()) return true
+    const q = agentSearch.toLowerCase()
+    return (
+      a.name?.toLowerCase().includes(q) ||
+      String(a.booth_number ?? '').includes(q) ||
+      a.phone?.includes(q) ||
+      a.area?.toLowerCase().includes(q)
+    )
+  })
   const displayDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-IN', {
     weekday: 'short', day: 'numeric', month: 'short'
   })
@@ -735,7 +753,7 @@ export default function ConstituencyAdminPage() {
 
       {/* ── AGENTS TAB ── */}
       {activeTab === 'Agents' && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Top action bar */}
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => setShowAddAgent(true)}
@@ -750,8 +768,7 @@ export default function ConstituencyAdminPage() {
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
                 <input
-                  type="search"
-                  value={agentSearch}
+                  type="search" value={agentSearch}
                   onChange={e => setAgentSearch(e.target.value)}
                   placeholder="Search name, booth, phone…"
                   className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
@@ -760,45 +777,177 @@ export default function ConstituencyAdminPage() {
             </div>
           </div>
 
-          {/* Bulk select bar — shown when agents exist */}
-          {filteredAgents.length > 0 && (
-            <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={selectedAgentIds.size === filteredAgents.length && filteredAgents.length > 0}
-                  onChange={() => toggleSelectAll(filteredAgents)}
-                  className="w-4 h-4 rounded accent-red-600"
-                />
-                <span className="text-xs font-semibold text-slate-600">
-                  {selectedAgentIds.size > 0 ? `${selectedAgentIds.size} selected` : 'Select all'}
-                </span>
-              </label>
-
-              {selectedAgentIds.size > 0 && (
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={bulkDeleting}
-                  className="ml-auto flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+          {/* ── Monitor filter chips ── */}
+          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
+            {/* All */}
+            <button
+              onClick={() => { setFilterMonitorId(''); setSelectedAgentIds(new Set()) }}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                filterMonitorId === ''
+                  ? 'bg-zinc-900 text-white border-zinc-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+              }`}
+            >
+              All · {agents.length}
+            </button>
+            {/* Unassigned */}
+            {unassigned.length > 0 && (
+              <button
+                onClick={() => { setFilterMonitorId('unassigned'); setSelectedAgentIds(new Set()) }}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  filterMonitorId === 'unassigned'
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-orange-50 text-orange-600 border-orange-200 hover:border-orange-400'
+                }`}
+              >
+                ⚠ Unassigned · {unassigned.length}
+              </button>
+            )}
+            {/* Per monitor */}
+            {monitors.map(m => {
+              const count = agents.filter(a => a.assigned_monitor_id === m.id).length
+              return (
+                <button key={m.id}
+                  onClick={() => { setFilterMonitorId(m.id); setSelectedAgentIds(new Set()) }}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                    filterMonitorId === m.id
+                      ? 'bg-red-600 text-white border-red-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-red-300'
+                  }`}
                 >
-                  {bulkDeleting
-                    ? <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Deleting…</>
-                    : `🗑 Delete ${selectedAgentIds.size}`}
+                  {m.full_name.split(' ')[0]} · {count}
                 </button>
-              )}
+              )
+            })}
+          </div>
 
-              <span className="text-xs text-slate-400 ml-auto">
-                {filteredAgents.length} of {agents.length}
-              </span>
+          {/* Monitor info header when filtered */}
+          {filterMonitorId && filterMonitorId !== 'unassigned' && (() => {
+            const mon = monitors.find(m => m.id === filterMonitorId)
+            const monAgents = agents.filter(a => a.assigned_monitor_id === filterMonitorId)
+            const stats = getMonitorStats(filterMonitorId)
+            return mon ? (
+              <div className="bg-zinc-950 rounded-xl p-4 text-white">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-white">{mon.full_name}</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{mon.email}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-white">{monAgents.length}</p>
+                    <p className="text-xs text-zinc-400">agents</p>
+                  </div>
+                </div>
+                {contents.length > 0 && monAgents.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-zinc-800 grid grid-cols-3 gap-2">
+                    {PLATFORMS.map(p => (
+                      <div key={p} className="text-center">
+                        <p className={`text-sm font-bold ${
+                          (stats.platformPct[p] ?? 0) >= 80 ? 'text-green-400' :
+                          (stats.platformPct[p] ?? 0) >= 50 ? 'text-yellow-400' : 'text-red-400'
+                        }`}>{stats.platformPct[p] ?? 0}%</p>
+                        <p className="text-xs text-zinc-500">{P_LABEL[p]}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null
+          })()}
+
+          {/* Unassigned header */}
+          {filterMonitorId === 'unassigned' && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3">
+              <span className="text-xl">⚠️</span>
+              <div>
+                <p className="text-sm font-semibold text-orange-800">{unassigned.length} agents not assigned to any monitor</p>
+                <p className="text-xs text-orange-600 mt-0.5">Select agents below and use Reassign to assign them</p>
+              </div>
             </div>
           )}
 
-          {/* Bulk assign */}
-          {agents.length > 0 && monitors.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <h3 className="font-semibold text-gray-900 mb-3 text-sm">Bulk Assign by Booth Range</h3>
-              <BulkAssign agents={agents} monitors={monitors} constituencyId={constituencyId} onAssigned={loadBase} />
+          {/* ── Bulk action bar ── shown when any agents exist in current filter */}
+          {filteredAgents.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {/* Select row */}
+              <div className="flex items-center gap-3 px-3 py-2 border-b border-slate-100">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={selectedAgentIds.size === filteredAgents.length && filteredAgents.length > 0}
+                    onChange={() => toggleSelectAll(filteredAgents)}
+                    className="w-4 h-4 rounded accent-red-600"
+                  />
+                  <span className="text-xs font-semibold text-slate-600">
+                    {selectedAgentIds.size > 0 ? `${selectedAgentIds.size} selected` : 'Select all'}
+                  </span>
+                </label>
+                <span className="text-xs text-slate-400 ml-auto">
+                  {filteredAgents.length} of {agents.length} agents
+                </span>
+              </div>
+
+              {/* Bulk actions — only shown when something selected */}
+              {selectedAgentIds.size > 0 && (
+                <div className="px-3 py-2.5 bg-slate-50 space-y-2">
+                  {/* Reassign row */}
+                  {monitors.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-slate-600 shrink-0">Reassign to:</span>
+                      <select
+                        value={reassignTargetId}
+                        onChange={e => setReassignTargetId(e.target.value)}
+                        className="flex-1 min-w-[140px] px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                      >
+                        <option value="">Choose monitor…</option>
+                        {monitors
+                          .filter(m => m.id !== filterMonitorId)
+                          .map(m => {
+                            const n = agents.filter(a => a.assigned_monitor_id === m.id).length
+                            return <option key={m.id} value={m.id}>{m.full_name} ({n})</option>
+                          })}
+                        <option value="unassigned">— Remove assignment</option>
+                      </select>
+                      <button
+                        onClick={handleBulkReassign}
+                        disabled={bulkReassigning || !reassignTargetId}
+                        className="shrink-0 bg-zinc-900 hover:bg-zinc-700 disabled:bg-slate-300 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
+                      >
+                        {bulkReassigning
+                          ? <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Moving…</>
+                          : `↪ Reassign ${selectedAgentIds.size}`}
+                      </button>
+                    </div>
+                  )}
+                  {/* Delete row */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 flex-1">or</span>
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={bulkDeleting}
+                      className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      {bulkDeleting
+                        ? <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Deleting…</>
+                        : `🗑 Delete ${selectedAgentIds.size}`}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+          )}
+
+          {/* Bulk assign by booth range */}
+          {agents.length > 0 && monitors.length > 0 && !filterMonitorId && (
+            <details className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <summary className="px-4 py-3 text-sm font-semibold text-gray-700 cursor-pointer select-none hover:bg-gray-50 list-none flex items-center justify-between">
+                <span>📍 Bulk Assign by Booth Range</span>
+                <span className="text-gray-400 text-xs">tap to expand</span>
+              </summary>
+              <div className="px-4 pb-4 pt-2 border-t border-gray-100">
+                <BulkAssign agents={agents} monitors={monitors} constituencyId={constituencyId} onAssigned={loadBase} />
+              </div>
+            </details>
           )}
 
           {/* Agent list */}
@@ -881,8 +1030,11 @@ export default function ConstituencyAdminPage() {
                     <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
                     <p className="text-xs text-gray-400">
                       {a.phone || ''}
-                      {a.phone && mon ? ' · ' : ''}
-                      {mon ? <span className="text-slate-500">{mon.full_name}</span> : <span className="text-orange-500">Unassigned</span>}
+                      {a.phone && !filterMonitorId ? ' · ' : ''}
+                      {!filterMonitorId && (mon
+                        ? <span className="text-slate-500">{mon.full_name}</span>
+                        : <span className="text-orange-500">Unassigned</span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
