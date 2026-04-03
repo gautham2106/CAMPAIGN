@@ -17,6 +17,7 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving }) {
     logsByPlatform?.[platform]?.is_checked === true
 
   const checkedCount = PLATFORMS.filter(isCheckedForPlatform).length
+  const isDone = checkedCount === 3
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
@@ -37,13 +38,13 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving }) {
           {agent.area && <p className="text-xs text-gray-500">{agent.area}</p>}
         </div>
         <div className={`text-xs font-bold px-2 py-1 rounded-full ${
-          checkedCount === 3
+          isDone
             ? 'bg-green-100 text-green-700'
             : checkedCount > 0
             ? 'bg-yellow-100 text-yellow-700'
             : 'bg-gray-100 text-gray-500'
         }`}>
-          {checkedCount}/3
+          {isDone ? '✓ Done' : `${checkedCount}/3`}
         </div>
       </div>
 
