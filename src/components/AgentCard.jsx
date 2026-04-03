@@ -4,30 +4,33 @@ function normalizePhone(phone) {
   return phone ? phone.replace(/\D/g, '') : ''
 }
 
-// Plain WA link — used when no content is selected
-function waLink(phone) {
-  return `https://wa.me/${normalizePhone(phone)}`
+// Plain WA link — to check if agent has posted status
+function waCheckLink(phone) {
+  const digits = normalizePhone(phone)
+  if (!digits) return null
+  return `https://wa.me/${digits}`
 }
 
-// WA link with pre-filled content message
-function waTemplateLink(phone, agent, content) {
+// WA link with pre-filled Tamil reminder message
+function waRemindLink(phone, agent, content) {
   const digits = normalizePhone(phone)
   if (!digits) return null
   const lines = [
-    `Hi ${agent.name}! 🙏`,
+    `வணக்கம் ${agent.name}! 🙏`,
     ``,
-    `Today's campaign content is ready to post:`,
+    `இன்றைய தேர்தல் பிரச்சார உள்ளடக்கம் தயாராக உள்ளது:`,
     ``,
     `📋 *${content.title}*`,
     content.description ? content.description : null,
     content.media_link ? `🔗 ${content.media_link}` : null,
     ``,
-    `Please post on:`,
+    `தயவுசெய்து கீழ்க்கண்ட தளங்களில் பதிவிடவும்:`,
     `✅ WhatsApp Status`,
     `✅ Facebook`,
     `✅ Instagram`,
     ``,
-    `Thank you! 🙏`,
+    `நன்றி! 🙏`,
+    `- DMK நாமக்கல் கிழக்கு IT Wing`,
   ].filter(l => l !== null).join('\n')
   return `https://wa.me/${digits}?text=${encodeURIComponent(lines)}`
 }
@@ -38,9 +41,8 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
   const isDone = checkedCount === 3
   const hasPhone = !!agent.phone
 
-  const waUrl = hasPhone
-    ? (content ? waTemplateLink(agent.phone, agent, content) : waLink(agent.phone))
-    : null
+  const checkUrl = hasPhone ? waCheckLink(agent.phone) : null
+  const remindUrl = (hasPhone && content) ? waRemindLink(agent.phone, agent, content) : null
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
@@ -78,24 +80,32 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
         </div>
 
         {/* Action buttons */}
-        <div className="grid grid-cols-4 gap-1.5">
-          {/* WhatsApp — template if content is available, plain otherwise */}
-          {waUrl && (
-            <a href={waUrl} target="_blank" rel="noopener noreferrer"
-              title={content ? 'Send content via WhatsApp' : 'Open WhatsApp'}
-              className="relative flex flex-col items-center justify-center bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-xl py-2.5 text-xs font-semibold transition-colors gap-0.5"
+        <div className="flex flex-wrap gap-1.5">
+          {/* WA Check — plain link to see if agent posted status */}
+          {checkUrl && (
+            <a href={checkUrl} target="_blank" rel="noopener noreferrer"
+              title="Open WhatsApp to check if posted"
+              className="flex flex-col items-center justify-center bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
             >
               <span className="text-base leading-none">💬</span>
-              <span>WA</span>
-              {content && (
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 rounded-full border-2 border-white" title="Pre-filled message" />
-              )}
+              <span>Check</span>
+            </a>
+          )}
+
+          {/* WA Remind — pre-filled Tamil reminder (only if content selected) */}
+          {remindUrl && (
+            <a href={remindUrl} target="_blank" rel="noopener noreferrer"
+              title="Send Tamil reminder to post content"
+              className="flex flex-col items-center justify-center bg-red-500 hover:bg-red-600 active:bg-red-700 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
+            >
+              <span className="text-base leading-none">🔔</span>
+              <span>Remind</span>
             </a>
           )}
 
           {agent.fb_url && (
             <a href={agent.fb_url} target="_blank" rel="noopener noreferrer"
-              className="flex flex-col items-center justify-center bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl py-2.5 text-xs font-semibold transition-colors gap-0.5"
+              className="flex flex-col items-center justify-center bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
             >
               <span className="text-base leading-none">📘</span>
               <span>FB</span>
@@ -104,7 +114,7 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
 
           {agent.ig_url && (
             <a href={agent.ig_url} target="_blank" rel="noopener noreferrer"
-              className="flex flex-col items-center justify-center bg-gradient-to-br from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500 text-white rounded-xl py-2.5 text-xs font-semibold transition-colors gap-0.5"
+              className="flex flex-col items-center justify-center bg-gradient-to-br from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
             >
               <span className="text-base leading-none">📸</span>
               <span>IG</span>
@@ -113,7 +123,7 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
 
           {hasPhone && (
             <a href={`tel:+${normalizePhone(agent.phone)}`}
-              className="flex flex-col items-center justify-center bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white rounded-xl py-2.5 text-xs font-semibold transition-colors gap-0.5"
+              className="flex flex-col items-center justify-center bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
             >
               <span className="text-base leading-none">📞</span>
               <span>Call</span>
@@ -121,10 +131,11 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
           )}
         </div>
 
-        {/* WA template hint */}
-        {content && waUrl && (
+        {/* Button legend */}
+        {content && checkUrl && (
           <p className="text-xs text-slate-400 -mt-1">
-            💬 WA opens with pre-filled message for <span className="font-medium text-slate-500">{content.title}</span>
+            💬 <span className="text-slate-500">Check</span> = view their WA status &nbsp;·&nbsp;
+            🔔 <span className="text-red-500">Remind</span> = send Tamil reminder for <span className="font-medium text-slate-500">{content.title}</span>
           </p>
         )}
 
@@ -143,9 +154,9 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
                     checked={checked}
                     disabled={saving}
                     onChange={() => onToggle(agent.id, platform, checked)}
-                    className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                    className="w-4 h-4 rounded accent-red-600 cursor-pointer"
                   />
-                  <span className={`text-xs font-semibold ${checked ? 'text-indigo-700' : 'text-slate-400'}`}>
+                  <span className={`text-xs font-semibold ${checked ? 'text-red-700' : 'text-slate-400'}`}>
                     {platform === 'whatsapp' ? 'WA' : platform === 'facebook' ? 'FB' : 'IG'}
                   </span>
                 </label>

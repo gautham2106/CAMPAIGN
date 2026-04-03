@@ -21,22 +21,27 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      {/* Subtle background pattern */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-100/60 via-transparent to-transparent pointer-events-none" />
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+      {/* Subtle red radial glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-red-950/40 via-transparent to-transparent pointer-events-none" />
 
       <div className="relative w-full max-w-sm">
         {/* Card */}
-        <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-          {/* Header strip */}
-          <div className="bg-gradient-to-r from-indigo-600 to-indigo-500 px-8 py-7">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-white/20 backdrop-blur rounded-xl flex items-center justify-center">
-                <span className="text-white font-bold text-base">C</span>
+        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+          {/* Header strip — DMK black/red split */}
+          <div className="relative px-8 py-7 overflow-hidden" style={{ background: 'linear-gradient(135deg, #18181b 0%, #18181b 50%, #dc2626 50%, #b91c1c 100%)' }}>
+            {/* Subtle shine overlay */}
+            <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
+            <div className="relative flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl overflow-hidden shrink-0 shadow-lg border border-white/20 flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg, #27272a 50%, #ef4444 50%)' }}
+              >
+                <span className="text-white font-black text-base drop-shadow">D</span>
               </div>
               <div>
-                <h1 className="text-white font-bold text-base leading-tight">Campaign Monitor</h1>
-                <p className="text-indigo-200 text-xs mt-0.5">Compliance tracking platform</p>
+                <h1 className="text-white font-bold text-base leading-tight">DMK Namakkal East</h1>
+                <p className="text-red-300 text-xs mt-0.5 font-semibold">IT Wing — Campaign Monitor</p>
               </div>
             </div>
           </div>
@@ -52,7 +57,7 @@ export default function LoginPage() {
                 <input
                   type="email" required autoComplete="email"
                   value={email} onChange={e => setEmail(e.target.value)}
-                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-slate-50 transition-colors placeholder:text-slate-400"
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-slate-50 transition-colors placeholder:text-slate-400"
                   placeholder="you@example.com"
                 />
               </div>
@@ -65,7 +70,7 @@ export default function LoginPage() {
                   <input
                     type={showPw ? 'text' : 'password'} required autoComplete="current-password"
                     value={password} onChange={e => setPassword(e.target.value)}
-                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-slate-50 transition-colors placeholder:text-slate-400 pr-10"
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-slate-50 transition-colors placeholder:text-slate-400 pr-10"
                     placeholder="••••••••"
                   />
                   <button
@@ -87,7 +92,7 @@ export default function LoginPage() {
 
               <button
                 type="submit" disabled={loading}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:bg-indigo-400 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm flex items-center justify-center gap-2 mt-1"
+                className="w-full bg-red-600 hover:bg-red-700 active:bg-red-800 disabled:bg-red-400 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm flex items-center justify-center gap-2 mt-1"
               >
                 {loading ? (
                   <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Signing in…</>
@@ -97,8 +102,8 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="text-center text-xs text-slate-400 mt-5">
-          Campaign Monitor v2 · Internal tool
+        <p className="text-center text-xs text-zinc-500 mt-5">
+          DMK Namakkal East IT Wing · Campaign Monitor v2
         </p>
       </div>
     </div>

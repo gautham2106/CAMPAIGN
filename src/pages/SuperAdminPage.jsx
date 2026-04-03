@@ -1,8 +1,90 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
+
+function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [constId, setConstId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleCreate(e) {
+    e.preventDefault()
+    if (!supabaseAdmin) { setError('Service role key not configured. Add VITE_SUPABASE_SERVICE_ROLE_KEY to .env'); return }
+    if (!constId) { setError('Please select a constituency'); return }
+    setSaving(true)
+    setError('')
+    try {
+      const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+        email, password, email_confirm: true,
+      })
+      if (authErr) throw authErr
+      const { error: profileErr } = await supabaseAdmin.from('profiles').insert({
+        id: authData.user.id,
+        full_name: name.trim(),
+        email,
+        role: 'constituency_admin',
+        constituency_id: constId,
+      })
+      if (profileErr) throw profileErr
+      onCreated?.()
+      onClose?.()
+    } catch (e) {
+      setError(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b bg-zinc-950">
+          <h2 className="text-base font-bold text-white">Add Constituency Admin</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleCreate} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Full Name *</label>
+            <input type="text" required value={name} onChange={e => setName(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder="Admin's full name" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Constituency *</label>
+            <select required value={constId} onChange={e => setConstId(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+              <option value="">Select constituency…</option>
+              {constituencies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Email *</label>
+            <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder="admin@example.com" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Temporary Password *</label>
+            <input type="text" required minLength={8} value={password} onChange={e => setPassword(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder="Min 8 characters" />
+          </div>
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{error}</div>}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 border border-slate-300 text-slate-700 font-medium py-2 rounded-lg text-sm hover:bg-slate-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold py-2 rounded-lg text-sm">
+              {saving ? 'Creating…' : 'Create Admin'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 const TODAY = new Date().toISOString().split('T')[0]
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
@@ -53,6 +135,8 @@ export default function SuperAdminPage() {
 
   const [loading, setLoading] = useState(true)
   const [showAddContent, setShowAddContent] = useState(false)
+  const [showAddConstAdmin, setShowAddConstAdmin] = useState(false)
+  const [deletingAdminId, setDeletingAdminId] = useState(null)
   const [newConstName, setNewConstName] = useState('')
   const [addingConst, setAddingConst] = useState(false)
   const [error, setError] = useState('')
@@ -163,6 +247,20 @@ export default function SuperAdminPage() {
     setAddingConst(false)
   }
 
+  async function handleDeleteConstAdmin(admin) {
+    if (!confirm(`Delete constituency admin "${admin.full_name}"? This cannot be undone.`)) return
+    setDeletingAdminId(admin.id)
+    if (supabaseAdmin) {
+      const { error: delErr } = await supabaseAdmin.auth.admin.deleteUser(admin.id)
+      if (delErr) { setError(delErr.message); setDeletingAdminId(null); return }
+    } else {
+      const { error: pErr } = await supabase.from('profiles').delete().eq('id', admin.id)
+      if (pErr) { setError(pErr.message); setDeletingAdminId(null); return }
+    }
+    loadBase()
+    setDeletingAdminId(null)
+  }
+
   async function deleteContent(id) {
     if (!confirm('Delete this content? All compliance logs for it will also be deleted.')) return
     const { error } = await supabase.from('daily_content').delete().eq('id', id)
@@ -193,7 +291,15 @@ export default function SuperAdminPage() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-4">{error}</div>
       )}
       {showAddContent && (
-        <AddContentModal onAdded={loadBase} onClose={() => setShowAddContent(false)} />
+        <AddContentModal constituencies={constituencies} onAdded={loadBase} onClose={() => setShowAddContent(false)} />
+      )}
+
+      {showAddConstAdmin && (
+        <CreateConstAdminModal
+          constituencies={constituencies}
+          onCreated={loadBase}
+          onClose={() => setShowAddConstAdmin(false)}
+        />
       )}
 
       {/* Tabs */}
@@ -201,7 +307,7 @@ export default function SuperAdminPage() {
         {TABS.map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={`shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              activeTab === tab ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}>
             {tab}
           </button>
@@ -230,7 +336,7 @@ export default function SuperAdminPage() {
           {/* Date picker */}
           <div>
             <button onClick={() => setShowCalendar(v => !v)}
-              className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-indigo-300 transition-colors w-full sm:w-auto">
+              className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-red-300 transition-colors w-full sm:w-auto">
               <span>📅</span>
               <span>{isToday ? `Today — ${displayDate}` : displayDate}</span>
               <span className="ml-auto text-gray-400 sm:ml-2">{showCalendar ? '▲' : '▼'}</span>
@@ -306,24 +412,28 @@ export default function SuperAdminPage() {
       {/* ── ADMINS TAB ── */}
       {activeTab === 'Admins' && (
         <div className="space-y-5">
-          {/* Date picker */}
-          <div>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            {/* Date picker */}
             <button onClick={() => setShowCalendar(v => !v)}
-              className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-indigo-300 transition-colors w-full sm:w-auto">
+              className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-red-300 transition-colors">
               <span>📅</span>
               <span>{isToday ? `Today — ${displayDate}` : displayDate}</span>
-              <span className="ml-auto text-gray-400 sm:ml-2">{showCalendar ? '▲' : '▼'}</span>
+              <span className="text-gray-400 ml-1">{showCalendar ? '▲' : '▼'}</span>
             </button>
-            {showCalendar && (
-              <div className="mt-2 max-w-sm">
-                <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false) }} markedDates={allContentDates} />
-              </div>
-            )}
+            <button onClick={() => setShowAddConstAdmin(true)}
+              className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl">
+              + Add Const Admin
+            </button>
           </div>
+          {showCalendar && (
+            <div className="max-w-sm">
+              <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false) }} markedDates={allContentDates} />
+            </div>
+          )}
 
           {constAdmins.length === 0 ? (
             <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-400 text-sm">
-              No constituency admins found. Create profiles with role=constituency_admin in Supabase.
+              No constituency admins yet. Click "+ Add Const Admin" to create one.
             </div>
           ) : (
             <div className="space-y-4">
@@ -344,11 +454,20 @@ export default function SuperAdminPage() {
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-gray-900">{admin.full_name}</p>
                         <p className="text-xs text-gray-500">{admin.email}</p>
-                        <p className="text-xs text-indigo-600 font-medium mt-0.5">{constName}</p>
+                        <p className="text-xs text-red-600 font-medium mt-0.5">{constName}</p>
                       </div>
-                      <div className="text-right shrink-0">
-                        <PctBadge value={s.overall} size="lg" />
-                        <p className="text-xs text-gray-400 mt-1">{monitorCount} monitors · {adminAgentIds.length} agents</p>
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <PctBadge value={s.overall} size="lg" />
+                          <button
+                            onClick={() => handleDeleteConstAdmin(admin)}
+                            disabled={deletingAdminId === admin.id}
+                            className="text-red-400 hover:text-red-600 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors disabled:opacity-40 border border-red-200"
+                          >
+                            {deletingAdminId === admin.id ? '…' : 'Delete'}
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-400">{monitorCount} monitors · {adminAgentIds.length} agents</p>
                       </div>
                     </div>
 
@@ -426,7 +545,7 @@ export default function SuperAdminPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-500">{todayContents.length} item(s) for today</p>
-            <button onClick={() => setShowAddContent(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl">
+            <button onClick={() => setShowAddContent(true)} className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2 rounded-xl">
               + Add Content
             </button>
           </div>
@@ -436,12 +555,12 @@ export default function SuperAdminPage() {
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Today</p>
               <div className="space-y-2">
                 {todayContents.map(c => (
-                  <div key={c.id} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-start justify-between gap-3">
+                  <div key={c.id} className="bg-red-50 border border-red-100 rounded-xl p-4 flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-indigo-900 text-sm">{c.title}</p>
-                      {c.description && <p className="text-xs text-indigo-700 mt-0.5 line-clamp-2">{c.description}</p>}
+                      <p className="font-semibold text-red-900 text-sm">{c.title}</p>
+                      {c.description && <p className="text-xs text-red-700 mt-0.5 line-clamp-2">{c.description}</p>}
                       {c.media_link && (
-                        <a href={c.media_link} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-500 underline mt-1 inline-block">
+                        <a href={c.media_link} target="_blank" rel="noopener noreferrer" className="text-xs text-red-500 underline mt-1 inline-block">
                           View media →
                         </a>
                       )}
@@ -499,10 +618,10 @@ export default function SuperAdminPage() {
               onChange={e => setNewConstName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addConstituency()}
               placeholder="New constituency name…"
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
             />
             <button onClick={addConstituency} disabled={addingConst || !newConstName.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white px-5 py-2 rounded-xl text-sm font-medium">
+              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white px-5 py-2 rounded-xl text-sm font-medium">
               {addingConst ? '…' : 'Add'}
             </button>
           </div>

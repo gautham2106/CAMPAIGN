@@ -14,7 +14,7 @@ function isAgentDoneForContent(logsByPlatform) {
 }
 
 export default function MonitorPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
 
   const [selectedDate, setSelectedDate] = useState(TODAY)
   const [showCalendar, setShowCalendar] = useState(false)
@@ -78,11 +78,16 @@ export default function MonitorPage() {
     setLogMap({})
 
     try {
-      const { data: dateContents, error: ce } = await supabase
+      const constId = profile?.constituency_id
+      let contentQuery = supabase
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
         .order('created_at')
+      if (constId) {
+        contentQuery = contentQuery.or(`target_constituencies.is.null,target_constituencies.cs.{"${constId}"}`)
+      }
+      const { data: dateContents, error: ce } = await contentQuery
       if (ce) throw ce
 
       setContents(dateContents ?? [])

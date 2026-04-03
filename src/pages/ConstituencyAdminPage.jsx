@@ -1,11 +1,103 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 import CSVImport from '../components/CSVImport'
 import BulkAssign from '../components/BulkAssign'
 import CreateMonitorModal from '../components/CreateMonitorModal'
 import MiniCalendar from '../components/MiniCalendar'
+
+function AddAgentModal({ constituencyId, onAdded, onClose }) {
+  const [name, setName] = useState('')
+  const [gender, setGender] = useState('')
+  const [booth, setBooth] = useState('')
+  const [phone, setPhone] = useState('')
+  const [fbUrl, setFbUrl] = useState('')
+  const [igUrl, setIgUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    const { error } = await supabase.from('digital_agents').insert({
+      name: name.trim(),
+      gender: gender || null,
+      booth_number: booth ? parseInt(booth) : null,
+      phone: phone.trim() || null,
+      fb_url: fbUrl.trim() || null,
+      ig_url: igUrl.trim() || null,
+      constituency_id: constituencyId,
+    })
+    if (error) { setError(error.message); setSaving(false) }
+    else { onAdded?.(); onClose?.() }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full sm:max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b bg-zinc-950">
+          <h2 className="text-base font-bold text-white">Add Agent</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Full Name *</label>
+              <input type="text" required value={name} onChange={e => setName(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="Agent's full name" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Gender</label>
+              <select value={gender} onChange={e => setGender(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+                <option value="">Select…</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Booth #</label>
+              <input type="number" value={booth} onChange={e => setBooth(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="e.g. 42" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Phone</label>
+              <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="+91 98765 43210" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Facebook URL</label>
+              <input type="url" value={fbUrl} onChange={e => setFbUrl(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="https://fb.com/…" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Instagram URL</label>
+              <input type="url" value={igUrl} onChange={e => setIgUrl(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                placeholder="https://instagram.com/…" />
+            </div>
+          </div>
+
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{error}</div>}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 border border-slate-300 text-slate-700 font-medium py-2 rounded-lg text-sm hover:bg-slate-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold py-2 rounded-lg text-sm">
+              {saving ? 'Adding…' : 'Add Agent'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 const TODAY = new Date().toISOString().split('T')[0]
 const TABS = ['Overview', 'Agents', 'Monitors', 'Import']
@@ -68,6 +160,11 @@ export default function ConstituencyAdminPage() {
   const [perfLoading, setPerfLoading] = useState(false)
   const [showPerf, setShowPerf] = useState(false)
 
+  // CRUD state
+  const [showAddAgent, setShowAddAgent] = useState(false)
+  const [deletingAgentId, setDeletingAgentId] = useState(null)
+  const [deletingMonitorId, setDeletingMonitorId] = useState(null)
+
   useEffect(() => {
     if (constituencyId) {
       loadBase()
@@ -106,11 +203,15 @@ export default function ConstituencyAdminPage() {
   async function loadDateData() {
     setError('')
     try {
-      const { data: dateContents, error: ce } = await supabase
+      let contentQuery = supabase
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
         .order('created_at')
+      if (constituencyId) {
+        contentQuery = contentQuery.or(`target_constituencies.is.null,target_constituencies.cs.{"${constituencyId}"}`)
+      }
+      const { data: dateContents, error: ce } = await contentQuery
       if (ce) throw ce
       setContents(dateContents ?? [])
 
@@ -246,6 +347,33 @@ export default function ConstituencyAdminPage() {
     loadBase()
   }
 
+  async function handleDeleteAgent(agentId, agentName) {
+    if (!confirm(`Delete agent "${agentName}"? This also removes all their compliance logs.`)) return
+    setDeletingAgentId(agentId)
+    const { error } = await supabase.from('digital_agents').delete().eq('id', agentId)
+    if (error) setError(error.message)
+    else loadBase()
+    setDeletingAgentId(null)
+  }
+
+  async function handleDeleteMonitor(monitor) {
+    if (!confirm(`Delete monitor "${monitor.full_name}"? Their agents will be unassigned.`)) return
+    setDeletingMonitorId(monitor.id)
+    // Unassign their agents first
+    await supabase.from('digital_agents').update({ assigned_monitor_id: null }).eq('assigned_monitor_id', monitor.id)
+    // Delete auth user (requires service role)
+    if (supabaseAdmin) {
+      const { error: delErr } = await supabaseAdmin.auth.admin.deleteUser(monitor.id)
+      if (delErr) { setError(delErr.message); setDeletingMonitorId(null); return }
+    } else {
+      // Fall back: just delete profile row (auth user stays but login will fail)
+      const { error: pErr } = await supabase.from('profiles').delete().eq('id', monitor.id)
+      if (pErr) { setError(pErr.message); setDeletingMonitorId(null); return }
+    }
+    loadBase()
+    setDeletingMonitorId(null)
+  }
+
   const unassigned = agents.filter(a => !a.assigned_monitor_id)
   const isToday = selectedDate === TODAY
   const displayDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-IN', {
@@ -271,6 +399,14 @@ export default function ConstituencyAdminPage() {
           constituencyId={constituencyId}
           onCreated={loadBase}
           onClose={() => setShowCreateMonitor(false)}
+        />
+      )}
+
+      {showAddAgent && (
+        <AddAgentModal
+          constituencyId={constituencyId}
+          onAdded={loadBase}
+          onClose={() => setShowAddAgent(false)}
         />
       )}
 
@@ -323,7 +459,7 @@ export default function ConstituencyAdminPage() {
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              activeTab === tab ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             {tab}
@@ -529,11 +665,17 @@ export default function ConstituencyAdminPage() {
       {/* ── AGENTS TAB ── */}
       {activeTab === 'Agents' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-gray-500">{agents.length} agents · {unassigned.length} unassigned</p>
-            <button onClick={() => setActiveTab('Import')} className="text-sm text-indigo-600 font-medium border border-indigo-200 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
-              + Import CSV
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowAddAgent(true)}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">
+                + Add Agent
+              </button>
+              <button onClick={() => setActiveTab('Import')} className="text-sm text-slate-600 font-medium border border-slate-200 px-3 py-2 rounded-xl hover:bg-slate-50">
+                Import CSV
+              </button>
+            </div>
           </div>
 
           {agents.length > 0 && monitors.length > 0 && (
@@ -549,20 +691,28 @@ export default function ConstituencyAdminPage() {
               const mon = monitors.find(m => m.id === a.assigned_monitor_id)
               return (
                 <div key={a.id} className="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-3">
-                  <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-1 rounded-lg shrink-0">#{a.booth_number}</span>
+                  <span className="text-xs font-bold bg-zinc-100 text-zinc-700 px-2 py-1 rounded-lg shrink-0">#{a.booth_number}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
                     <p className="text-xs text-gray-400 capitalize">{a.gender || ''} {a.phone ? `· ${a.phone}` : ''}</p>
                   </div>
                   <div className="shrink-0 flex flex-col items-end gap-1">
                     {mon ? (
-                      <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium">{mon.full_name}</span>
+                      <span className="text-xs bg-slate-50 text-slate-700 px-2 py-0.5 rounded-full font-medium border border-slate-200">{mon.full_name}</span>
                     ) : (
                       <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium">Unassigned</span>
                     )}
-                    <div className="flex gap-1">
+                    <div className="flex gap-1.5 items-center">
                       {a.fb_url && <a href={a.fb_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 text-xs">FB</a>}
                       {a.ig_url && <a href={a.ig_url} target="_blank" rel="noopener noreferrer" className="text-pink-500 text-xs">IG</a>}
+                      <button
+                        onClick={() => handleDeleteAgent(a.id, a.name)}
+                        disabled={deletingAgentId === a.id}
+                        className="text-red-400 hover:text-red-600 text-xs ml-1 px-1.5 py-0.5 rounded hover:bg-red-50 transition-colors disabled:opacity-40"
+                        title="Delete agent"
+                      >
+                        {deletingAgentId === a.id ? '…' : '✕'}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -570,7 +720,7 @@ export default function ConstituencyAdminPage() {
             })}
             {agents.length === 0 && (
               <div className="text-center py-12 text-gray-400 text-sm">
-                No agents yet. Import from CSV to get started.
+                No agents yet. Click "Add Agent" or import from CSV.
               </div>
             )}
           </div>
@@ -582,7 +732,7 @@ export default function ConstituencyAdminPage() {
         <div className="space-y-5">
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-500">{monitors.length} monitors in this constituency</p>
-            <button onClick={() => setShowCreateMonitor(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">
+            <button onClick={() => setShowCreateMonitor(true)} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">
               + Add Monitor
             </button>
           </div>
@@ -593,16 +743,26 @@ export default function ConstituencyAdminPage() {
               const assignedCount = agents.filter(a => a.assigned_monitor_id === m.id).length
               return (
                 <div key={m.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-900">{m.full_name}</p>
                       <p className="text-xs text-slate-500 mt-0.5">{m.email}</p>
                     </div>
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                      assignedCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {assignedCount} agent{assignedCount !== 1 ? 's' : ''}
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                        assignedCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {assignedCount} agent{assignedCount !== 1 ? 's' : ''}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteMonitor(m)}
+                        disabled={deletingMonitorId === m.id}
+                        className="text-red-400 hover:text-red-600 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors disabled:opacity-40 border border-red-200"
+                        title="Delete monitor"
+                      >
+                        {deletingMonitorId === m.id ? '…' : 'Delete'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )

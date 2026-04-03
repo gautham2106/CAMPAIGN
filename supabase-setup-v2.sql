@@ -44,9 +44,14 @@ CREATE TABLE IF NOT EXISTS daily_content (
   description TEXT,
   media_link TEXT,
   content_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  -- NULL = visible to ALL constituencies; array of UUIDs = targeted constituencies only
+  target_constituencies UUID[] DEFAULT NULL,
   created_by UUID REFERENCES auth.users(id),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- If upgrading an existing database, run this migration:
+-- ALTER TABLE daily_content ADD COLUMN IF NOT EXISTS target_constituencies UUID[] DEFAULT NULL;
 
 -- 5. COMPLIANCE LOGS
 CREATE TABLE IF NOT EXISTS compliance_logs (
