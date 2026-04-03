@@ -145,22 +145,35 @@ export default function MonitorPage() {
         .in('agent_id', agents.map(a => a.id))
         .eq('is_checked', true)
 
-      // Per agent: count fully posted (all 3 platforms for a content)
+      // Per agent: track per-platform counts AND fully-posted counts
       const agentContentChecks = {} // { [agent_id]: { [content_id]: platform_count } }
+      const agentPlatformCounts = {} // { [agent_id]: { whatsapp: N, facebook: N, instagram: N } }
       for (const log of logs ?? []) {
+        // content-level tracking
         if (!agentContentChecks[log.agent_id]) agentContentChecks[log.agent_id] = {}
         agentContentChecks[log.agent_id][log.content_id] =
           (agentContentChecks[log.agent_id][log.content_id] ?? 0) + 1
+        // platform-level tracking
+        if (!agentPlatformCounts[log.agent_id]) agentPlatformCounts[log.agent_id] = { whatsapp: 0, facebook: 0, instagram: 0 }
+        agentPlatformCounts[log.agent_id][log.platform]++
       }
 
+      const total = recentContent.length
       const perf = {}
       for (const agent of agents) {
         const map = agentContentChecks[agent.id] ?? {}
+        const pc = agentPlatformCounts[agent.id] ?? { whatsapp: 0, facebook: 0, instagram: 0 }
         const fullyPosted = Object.values(map).filter(c => c === 3).length
+        const p = (n) => total ? Math.round(n / total * 100) : 0
         perf[agent.id] = {
           fullyPosted,
-          total: recentContent.length,
-          rate: recentContent.length ? Math.round(fullyPosted / recentContent.length * 100) : 0,
+          total,
+          rate: p(fullyPosted),
+          platforms: {
+            whatsapp: p(pc.whatsapp),
+            facebook: p(pc.facebook),
+            instagram: p(pc.instagram),
+          },
         }
       }
       setPerfData(perf)
@@ -389,46 +402,79 @@ export default function MonitorPage() {
           {/* ── PERFORMANCE TAB ── */}
           {activeTab === 'performance' && (
             <div>
-              <p className="text-xs text-gray-500 mb-4">
-                Based on last 30 days of content. "Fully posted" = all 3 platforms checked.
+              <p className="text-xs text-slate-500 mb-4">
+                Last 30 days · "All done" = all 3 platforms checked for that content
               </p>
               {perfLoading ? (
-                <div className="text-center py-12 text-gray-400 text-sm">Loading performance data…</div>
+                <div className="text-center py-12 text-slate-400 text-sm">Loading performance data…</div>
               ) : !perfData ? (
-                <div className="text-center py-12 text-gray-400 text-sm">No data yet.</div>
+                <div className="text-center py-12 text-slate-400 text-sm">No data yet.</div>
               ) : agents.length === 0 ? (
-                <div className="text-center py-12 text-gray-400 text-sm">No agents assigned.</div>
+                <div className="text-center py-12 text-slate-400 text-sm">No agents assigned.</div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {[...agents]
                     .sort((a, b) => (perfData[a.id]?.rate ?? 0) - (perfData[b.id]?.rate ?? 0))
                     .map(agent => {
-                      const p = perfData[agent.id] ?? { fullyPosted: 0, total: 0, rate: 0 }
-                      const color = p.rate >= 80 ? 'text-green-600' : p.rate >= 50 ? 'text-yellow-600' : 'text-red-500'
-                      const barColor = p.rate >= 80 ? 'bg-green-500' : p.rate >= 50 ? 'bg-yellow-400' : 'bg-red-400'
-                      const badge = p.rate >= 80 ? '🟢 Consistent' : p.rate >= 50 ? '🟡 Average' : '🔴 Needs follow-up'
+                      const p = perfData[agent.id] ?? { fullyPosted: 0, total: 0, rate: 0, platforms: { whatsapp: 0, facebook: 0, instagram: 0 } }
+                      const statusColor = p.rate >= 80 ? 'border-l-emerald-500' : p.rate >= 50 ? 'border-l-amber-400' : 'border-l-rose-400'
+                      const rateColor = p.rate >= 80 ? 'text-emerald-600' : p.rate >= 50 ? 'text-amber-600' : 'text-rose-500'
+                      const statusLabel = p.rate >= 80 ? 'Consistent' : p.rate >= 50 ? 'Average' : 'Needs follow-up'
+                      const statusBadge = p.rate >= 80 ? 'bg-emerald-50 text-emerald-700' : p.rate >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-600'
+
+                      const platformMeta = [
+                        { key: 'whatsapp', label: 'WA', icon: '💬', color: 'bg-emerald-500' },
+                        { key: 'facebook', label: 'FB', icon: '📘', color: 'bg-blue-500' },
+                        { key: 'instagram', label: 'IG', icon: '📸', color: 'bg-pink-500' },
+                      ]
+
                       return (
-                        <div key={agent.id} className="bg-white rounded-xl border border-gray-200 p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
+                        <div key={agent.id} className={`bg-white rounded-xl border border-slate-200 border-l-4 ${statusColor} p-4 shadow-sm`}>
+                          {/* Header */}
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2 flex-wrap">
                               {agent.booth_number != null && (
-                                <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                                  #{agent.booth_number}
+                                <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md border border-indigo-100">
+                                  Booth #{agent.booth_number}
                                 </span>
                               )}
-                              <span className="font-semibold text-gray-900 text-sm">{agent.name}</span>
+                              <span className="font-semibold text-slate-800">{agent.name}</span>
                             </div>
-                            <div className="text-right">
-                              <span className={`text-lg font-bold ${color}`}>{p.rate}%</span>
+                            <div className="text-right shrink-0 ml-2">
+                              <div className={`text-xl font-bold ${rateColor}`}>{p.rate}%</div>
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusBadge}`}>{statusLabel}</span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${p.rate}%` }} />
+
+                          {/* All-done bar */}
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-xs text-slate-400 w-16 shrink-0">All done</span>
+                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${p.rate >= 80 ? 'bg-emerald-500' : p.rate >= 50 ? 'bg-amber-400' : 'bg-rose-400'}`}
+                                style={{ width: `${p.rate}%` }}
+                              />
                             </div>
-                            <span className="text-xs text-gray-500 shrink-0">{p.fullyPosted}/{p.total} content</span>
+                            <span className="text-xs text-slate-400 w-14 text-right shrink-0">{p.fullyPosted}/{p.total}</span>
                           </div>
-                          <p className="text-xs text-gray-500 mt-1.5">{badge}</p>
+
+                          {/* Platform bars */}
+                          <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                            {platformMeta.map(({ key, label, icon, color }) => {
+                              const val = p.platforms?.[key] ?? 0
+                              return (
+                                <div key={key} className="flex items-center gap-2">
+                                  <span className="text-xs text-slate-500 w-16 shrink-0">{icon} {label}</span>
+                                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full ${color}`} style={{ width: `${val}%` }} />
+                                  </div>
+                                  <span className={`text-xs font-semibold w-8 text-right shrink-0 ${val >= 80 ? 'text-emerald-600' : val >= 50 ? 'text-amber-600' : 'text-rose-500'}`}>
+                                    {val}%
+                                  </span>
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
                       )
                     })}
