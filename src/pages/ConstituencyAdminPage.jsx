@@ -165,13 +165,17 @@ export default function ConstituencyAdminPage() {
   const [deletingAgentId, setDeletingAgentId] = useState(null)
   const [deletingMonitorId, setDeletingMonitorId] = useState(null)
 
-  // Agents tab: search + filter + bulk + inline edit
+  // Agents tab: search + filter + range select + bulk + inline edit
   const [agentSearch, setAgentSearch] = useState('')
   const [filterMonitorId, setFilterMonitorId] = useState('') // '' = all, 'unassigned' = no monitor
   const [selectedAgentIds, setSelectedAgentIds] = useState(new Set())
+  const [rangeFrom, setRangeFrom] = useState('')
+  const [rangeTo, setRangeTo] = useState('')
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [reassignTargetId, setReassignTargetId] = useState('')
   const [bulkReassigning, setBulkReassigning] = useState(false)
+  // confirmAction: null | { type: 'assign'|'delete', monitorId?, monitorName?, count }
+  const [confirmAction, setConfirmAction] = useState(null)
   const [editingAgentId, setEditingAgentId] = useState(null)
   const [editAgentValues, setEditAgentValues] = useState({})
   const [savingEdit, setSavingEdit] = useState(false)
@@ -358,8 +362,56 @@ export default function ConstituencyAdminPage() {
     loadBase()
   }
 
-  async function handleBulkReassign() {
+  // Range select — adds all agents with booth in [from,to] to selection
+  function handleRangeSelect() {
+    const from = parseInt(rangeFrom)
+    const to = parseInt(rangeTo)
+    if (isNaN(from) || isNaN(to) || from > to) return
+    const inRange = filteredAgents.filter(a => {
+      const b = parseInt(a.booth_number)
+      return !isNaN(b) && b >= from && b <= to
+    })
+    if (!inRange.length) return
+    setSelectedAgentIds(prev => {
+      const next = new Set(prev)
+      inRange.forEach(a => next.add(a.id))
+      return next
+    })
+  }
+
+  function handleRangeDeselect() {
+    const from = parseInt(rangeFrom)
+    const to = parseInt(rangeTo)
+    if (isNaN(from) || isNaN(to) || from > to) return
+    const inRange = new Set(
+      filteredAgents.filter(a => {
+        const b = parseInt(a.booth_number)
+        return !isNaN(b) && b >= from && b <= to
+      }).map(a => a.id)
+    )
+    setSelectedAgentIds(prev => {
+      const next = new Set(prev)
+      inRange.forEach(id => next.delete(id))
+      return next
+    })
+  }
+
+  // Show inline confirmation before executing
+  function requestBulkReassign() {
     if (selectedAgentIds.size === 0 || !reassignTargetId) return
+    const mon = reassignTargetId === 'unassigned'
+      ? { full_name: 'No Monitor (Unassign)' }
+      : monitors.find(m => m.id === reassignTargetId)
+    setConfirmAction({ type: 'assign', monitorId: reassignTargetId, monitorName: mon?.full_name, count: selectedAgentIds.size })
+  }
+
+  function requestBulkDelete() {
+    if (selectedAgentIds.size === 0) return
+    setConfirmAction({ type: 'delete', count: selectedAgentIds.size })
+  }
+
+  async function executeBulkReassign() {
+    setConfirmAction(null)
     setBulkReassigning(true)
     const newMonitorId = reassignTargetId === 'unassigned' ? null : reassignTargetId
     const { error } = await supabase.from('digital_agents')
@@ -370,9 +422,8 @@ export default function ConstituencyAdminPage() {
     setBulkReassigning(false)
   }
 
-  async function handleBulkDelete() {
-    if (selectedAgentIds.size === 0) return
-    if (!confirm(`Permanently delete ${selectedAgentIds.size} agent(s)? This also removes their compliance logs.`)) return
+  async function executeBulkDelete() {
+    setConfirmAction(null)
     setBulkDeleting(true)
     const { error } = await supabase.from('digital_agents').delete().in('id', [...selectedAgentIds])
     if (error) setError(error.message)
@@ -422,7 +473,7 @@ export default function ConstituencyAdminPage() {
   }
 
   async function handleDeleteAgent(agentId, agentName) {
-    if (!confirm(`Delete agent "${agentName}"? This also removes all their compliance logs.`)) return
+    if (!window.confirm(`Delete agent "${agentName}"?\nThis also removes all their compliance logs.`)) return
     setDeletingAgentId(agentId)
     const { error } = await supabase.from('digital_agents').delete().eq('id', agentId)
     if (error) setError(error.message)
@@ -866,11 +917,63 @@ export default function ConstituencyAdminPage() {
             </div>
           )}
 
-          {/* ── Bulk action bar ── shown when any agents exist in current filter */}
+          {/* ── Range selector ── */}
+          {filteredAgents.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl px-3 py-3">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Select by Booth Range</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number" placeholder="From" value={rangeFrom}
+                    onChange={e => setRangeFrom(e.target.value)}
+                    className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                  <span className="text-slate-400 text-sm font-bold">—</span>
+                  <input
+                    type="number" placeholder="To" value={rangeTo}
+                    onChange={e => setRangeTo(e.target.value)}
+                    className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                </div>
+                <button
+                  onClick={handleRangeSelect}
+                  disabled={!rangeFrom || !rangeTo}
+                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-semibold rounded-lg transition-colors"
+                >
+                  + Add to Selection
+                </button>
+                <button
+                  onClick={handleRangeDeselect}
+                  disabled={!rangeFrom || !rangeTo}
+                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 disabled:opacity-40 text-slate-600 text-xs font-semibold rounded-lg transition-colors"
+                >
+                  − Remove from Selection
+                </button>
+                {(rangeFrom || rangeTo) && (
+                  <button onClick={() => { setRangeFrom(''); setRangeTo('') }}
+                    className="text-slate-400 hover:text-slate-600 text-xs px-1">
+                    ✕ Clear
+                  </button>
+                )}
+              </div>
+              {rangeFrom && rangeTo && parseInt(rangeFrom) <= parseInt(rangeTo) && (() => {
+                const from = parseInt(rangeFrom), to = parseInt(rangeTo)
+                const count = filteredAgents.filter(a => {
+                  const b = parseInt(a.booth_number)
+                  return !isNaN(b) && b >= from && b <= to
+                }).length
+                return count > 0
+                  ? <p className="text-xs text-slate-500 mt-1.5">{count} agent{count !== 1 ? 's' : ''} in booth range {rangeFrom}–{rangeTo}</p>
+                  : <p className="text-xs text-orange-500 mt-1.5">No agents found in booth {rangeFrom}–{rangeTo}</p>
+              })()}
+            </div>
+          )}
+
+          {/* ── Bulk action bar ── */}
           {filteredAgents.length > 0 && (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              {/* Select row */}
-              <div className="flex items-center gap-3 px-3 py-2 border-b border-slate-100">
+              {/* Select all row */}
+              <div className="flex items-center gap-3 px-3 py-2.5 border-b border-slate-100">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -879,57 +982,85 @@ export default function ConstituencyAdminPage() {
                     className="w-4 h-4 rounded accent-red-600"
                   />
                   <span className="text-xs font-semibold text-slate-600">
-                    {selectedAgentIds.size > 0 ? `${selectedAgentIds.size} selected` : 'Select all'}
+                    {selectedAgentIds.size > 0 ? `${selectedAgentIds.size} selected` : 'Select all visible'}
                   </span>
                 </label>
                 <span className="text-xs text-slate-400 ml-auto">
-                  {filteredAgents.length} of {agents.length} agents
+                  {filteredAgents.length} of {agents.length}
                 </span>
               </div>
 
-              {/* Bulk actions — only shown when something selected */}
-              {selectedAgentIds.size > 0 && (
-                <div className="px-3 py-2.5 bg-slate-50 space-y-2">
-                  {/* Reassign row */}
+              {/* Actions — shown when agents selected */}
+              {selectedAgentIds.size > 0 && !confirmAction && (
+                <div className="px-3 py-3 bg-slate-50 space-y-2.5">
+                  {/* Reassign */}
                   {monitors.length > 0 && (
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-semibold text-slate-600 shrink-0">Reassign to:</span>
-                      <select
-                        value={reassignTargetId}
-                        onChange={e => setReassignTargetId(e.target.value)}
-                        className="flex-1 min-w-[140px] px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
-                      >
+                      <select value={reassignTargetId} onChange={e => setReassignTargetId(e.target.value)}
+                        className="flex-1 min-w-[140px] px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-500">
                         <option value="">Choose monitor…</option>
-                        {monitors
-                          .filter(m => m.id !== filterMonitorId)
-                          .map(m => {
-                            const n = agents.filter(a => a.assigned_monitor_id === m.id).length
-                            return <option key={m.id} value={m.id}>{m.full_name} ({n})</option>
-                          })}
+                        {monitors.filter(m => m.id !== filterMonitorId).map(m => {
+                          const n = agents.filter(a => a.assigned_monitor_id === m.id).length
+                          return <option key={m.id} value={m.id}>{m.full_name} ({n} agents)</option>
+                        })}
                         <option value="unassigned">— Remove assignment</option>
                       </select>
                       <button
-                        onClick={handleBulkReassign}
+                        onClick={requestBulkReassign}
                         disabled={bulkReassigning || !reassignTargetId}
-                        className="shrink-0 bg-zinc-900 hover:bg-zinc-700 disabled:bg-slate-300 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
+                        className="shrink-0 bg-zinc-900 hover:bg-zinc-700 disabled:bg-slate-300 disabled:text-slate-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                       >
                         {bulkReassigning
-                          ? <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Moving…</>
+                          ? <span className="flex items-center gap-1"><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Moving…</span>
                           : `↪ Reassign ${selectedAgentIds.size}`}
                       </button>
                     </div>
                   )}
-                  {/* Delete row */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-400 flex-1">or</span>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-slate-200" />
+                    <span className="text-xs text-slate-400">or</span>
+                    <div className="flex-1 h-px bg-slate-200" />
+                  </div>
+                  <button onClick={requestBulkDelete} disabled={bulkDeleting}
+                    className="w-full flex items-center justify-center gap-1.5 border border-red-300 text-red-600 hover:bg-red-50 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40">
+                    🗑 Delete {selectedAgentIds.size} selected agent{selectedAgentIds.size !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              )}
+
+              {/* ── Inline confirmation panel ── */}
+              {confirmAction && (
+                <div className={`px-4 py-4 ${confirmAction.type === 'delete' ? 'bg-red-50 border-t border-red-200' : 'bg-zinc-950'}`}>
+                  <p className={`text-sm font-bold mb-1 ${confirmAction.type === 'delete' ? 'text-red-800' : 'text-white'}`}>
+                    {confirmAction.type === 'delete'
+                      ? `⚠ Delete ${confirmAction.count} agent${confirmAction.count !== 1 ? 's' : ''}?`
+                      : `↪ Reassign ${confirmAction.count} agent${confirmAction.count !== 1 ? 's' : ''}?`}
+                  </p>
+                  <p className={`text-xs mb-3 ${confirmAction.type === 'delete' ? 'text-red-600' : 'text-zinc-300'}`}>
+                    {confirmAction.type === 'delete'
+                      ? 'This permanently removes the agents and all their compliance logs. Cannot be undone.'
+                      : `Moving to: ${confirmAction.monitorName}`}
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setConfirmAction(null)}
+                      className={`flex-1 text-sm font-medium py-2 rounded-lg border transition-colors ${
+                        confirmAction.type === 'delete'
+                          ? 'border-red-300 text-red-700 hover:bg-red-100'
+                          : 'border-zinc-600 text-zinc-300 hover:bg-zinc-800'
+                      }`}>
+                      Cancel
+                    </button>
                     <button
-                      onClick={handleBulkDelete}
-                      disabled={bulkDeleting}
-                      className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      {bulkDeleting
-                        ? <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Deleting…</>
-                        : `🗑 Delete ${selectedAgentIds.size}`}
+                      onClick={confirmAction.type === 'delete' ? executeBulkDelete : executeBulkReassign}
+                      className={`flex-1 text-sm font-bold py-2 rounded-lg transition-colors text-white ${
+                        confirmAction.type === 'delete'
+                          ? 'bg-red-600 hover:bg-red-700'
+                          : 'bg-red-600 hover:bg-red-700'
+                      }`}>
+                      {confirmAction.type === 'delete'
+                        ? `Yes, Delete ${confirmAction.count}`
+                        : `Yes, Reassign ${confirmAction.count}`}
                     </button>
                   </div>
                 </div>
