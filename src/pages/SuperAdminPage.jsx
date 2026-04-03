@@ -116,6 +116,68 @@ function PlatformBar({ value, label }) {
   )
 }
 
+function ContentCard({ c, isEditing, editValues, setEditValues, saving, onEdit, onSave, onCancel, onDelete, highlight }) {
+  if (isEditing) {
+    return (
+      <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-3">
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Title *</label>
+          <input type="text" value={editValues.title}
+            onChange={e => setEditValues(v => ({ ...v, title: e.target.value }))}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Description</label>
+          <textarea value={editValues.description} rows={2}
+            onChange={e => setEditValues(v => ({ ...v, description: e.target.value }))}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Media Link</label>
+          <input type="url" value={editValues.media_link}
+            onChange={e => setEditValues(v => ({ ...v, media_link: e.target.value }))}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            placeholder="https://drive.google.com/..."
+          />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onCancel} className="flex-1 border border-slate-300 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50">Cancel</button>
+          <button onClick={onSave} disabled={saving || !editValues.title?.trim()}
+            className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-sm font-semibold py-2 rounded-lg">
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`rounded-xl p-4 flex items-start gap-3 border ${
+      highlight ? 'bg-red-50 border-red-100' : 'bg-white border-gray-200'
+    }`}>
+      <div className="flex-1 min-w-0">
+        {!highlight && <p className="text-xs text-gray-400 mb-0.5">{c.content_date}</p>}
+        <p className={`font-semibold text-sm ${highlight ? 'text-red-900' : 'text-gray-800'}`}>{c.title}</p>
+        {c.description && <p className={`text-xs mt-0.5 line-clamp-2 ${highlight ? 'text-red-700' : 'text-gray-500'}`}>{c.description}</p>}
+        {c.target_constituencies?.length > 0 && (
+          <p className="text-xs text-zinc-400 mt-0.5">Targeted: {c.target_constituencies.length} constituency(ies)</p>
+        )}
+        {c.media_link && (
+          <a href={c.media_link} target="_blank" rel="noopener noreferrer" className={`text-xs underline mt-1 inline-block ${highlight ? 'text-red-500' : 'text-blue-500'}`}>
+            View media →
+          </a>
+        )}
+      </div>
+      <div className="flex flex-col gap-1 shrink-0">
+        <button onClick={onEdit} className="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-slate-100 transition-colors">✏️ Edit</button>
+        <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors">Delete</button>
+      </div>
+    </div>
+  )
+}
+
 export default function SuperAdminPage() {
   const [activeTab, setActiveTab] = useState('Dashboard')
   const [selectedDate, setSelectedDate] = useState(TODAY)
@@ -140,6 +202,11 @@ export default function SuperAdminPage() {
   const [newConstName, setNewConstName] = useState('')
   const [addingConst, setAddingConst] = useState(false)
   const [error, setError] = useState('')
+
+  // Content inline edit
+  const [editingContentId, setEditingContentId] = useState(null)
+  const [editContentValues, setEditContentValues] = useState({})
+  const [savingContent, setSavingContent] = useState(false)
 
   useEffect(() => { loadBase() }, [])
   useEffect(() => { if (allAgents.length) loadDateCompliance() }, [selectedDate, allAgents])
@@ -245,6 +312,24 @@ export default function SuperAdminPage() {
     if (error) setError(error.message)
     else { setNewConstName(''); loadBase() }
     setAddingConst(false)
+  }
+
+  function startEditContent(c) {
+    setEditingContentId(c.id)
+    setEditContentValues({ title: c.title, description: c.description ?? '', media_link: c.media_link ?? '' })
+  }
+
+  async function saveEditContent(id) {
+    if (!editContentValues.title.trim()) return
+    setSavingContent(true)
+    const { error } = await supabase.from('daily_content').update({
+      title: editContentValues.title.trim(),
+      description: editContentValues.description.trim() || null,
+      media_link: editContentValues.media_link.trim() || null,
+    }).eq('id', id)
+    if (error) setError(error.message)
+    else { setEditingContentId(null); loadBase() }
+    setSavingContent(false)
   }
 
   async function handleDeleteConstAdmin(admin) {
@@ -550,23 +635,27 @@ export default function SuperAdminPage() {
             </button>
           </div>
 
+          {/* Render a content card — shared between today + past */}
+          {contents.length === 0 && (
+            <div className="text-center py-12 text-gray-400 text-sm">No content yet. Click "Add Content".</div>
+          )}
+
           {todayContents.length > 0 && (
             <div>
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Today</p>
               <div className="space-y-2">
                 {todayContents.map(c => (
-                  <div key={c.id} className="bg-red-50 border border-red-100 rounded-xl p-4 flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-red-900 text-sm">{c.title}</p>
-                      {c.description && <p className="text-xs text-red-700 mt-0.5 line-clamp-2">{c.description}</p>}
-                      {c.media_link && (
-                        <a href={c.media_link} target="_blank" rel="noopener noreferrer" className="text-xs text-red-500 underline mt-1 inline-block">
-                          View media →
-                        </a>
-                      )}
-                    </div>
-                    <button onClick={() => deleteContent(c.id)} className="text-red-400 hover:text-red-600 text-sm shrink-0">Delete</button>
-                  </div>
+                  <ContentCard key={c.id} c={c}
+                    isEditing={editingContentId === c.id}
+                    editValues={editContentValues}
+                    setEditValues={setEditContentValues}
+                    saving={savingContent}
+                    onEdit={() => startEditContent(c)}
+                    onSave={() => saveEditContent(c.id)}
+                    onCancel={() => setEditingContentId(null)}
+                    onDelete={() => deleteContent(c.id)}
+                    highlight
+                  />
                 ))}
               </div>
             </div>
@@ -575,35 +664,21 @@ export default function SuperAdminPage() {
           {contents.filter(c => c.content_date !== TODAY).length > 0 && (
             <div>
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2 mt-4">Past Content</p>
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-medium text-gray-600 text-xs">Date</th>
-                        <th className="px-4 py-3 text-left font-medium text-gray-600 text-xs">Title</th>
-                        <th className="px-4 py-3 text-xs"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {contents.filter(c => c.content_date !== TODAY).map(c => (
-                        <tr key={c.id} className="border-t border-gray-100">
-                          <td className="px-4 py-2.5 text-gray-400 text-xs">{c.content_date}</td>
-                          <td className="px-4 py-2.5 text-gray-800 text-sm">{c.title}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <button onClick={() => deleteContent(c.id)} className="text-red-400 hover:text-red-600 text-xs">Delete</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="space-y-2">
+                {contents.filter(c => c.content_date !== TODAY).map(c => (
+                  <ContentCard key={c.id} c={c}
+                    isEditing={editingContentId === c.id}
+                    editValues={editContentValues}
+                    setEditValues={setEditContentValues}
+                    saving={savingContent}
+                    onEdit={() => startEditContent(c)}
+                    onSave={() => saveEditContent(c.id)}
+                    onCancel={() => setEditingContentId(null)}
+                    onDelete={() => deleteContent(c.id)}
+                  />
+                ))}
               </div>
             </div>
-          )}
-
-          {contents.length === 0 && (
-            <div className="text-center py-12 text-gray-400 text-sm">No content yet. Click "Add Content".</div>
           )}
         </div>
       )}
