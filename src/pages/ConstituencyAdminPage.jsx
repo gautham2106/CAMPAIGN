@@ -165,16 +165,16 @@ export default function ConstituencyAdminPage() {
   const [deletingAgentId, setDeletingAgentId] = useState(null)
   const [deletingMonitorId, setDeletingMonitorId] = useState(null)
 
-  // Agents tab: search + filter + range select + bulk + inline edit
+  // Agents tab: search + filter + bulk + inline edit
   const [agentSearch, setAgentSearch] = useState('')
-  const [filterMonitorId, setFilterMonitorId] = useState('') // '' = all, 'unassigned' = no monitor
+  const [filterMonitorId, setFilterMonitorId] = useState('')
+  const [boothFrom, setBoothFrom] = useState('')
+  const [boothTo, setBoothTo] = useState('')
+  const [showBoothFilter, setShowBoothFilter] = useState(false)
   const [selectedAgentIds, setSelectedAgentIds] = useState(new Set())
-  const [rangeFrom, setRangeFrom] = useState('')
-  const [rangeTo, setRangeTo] = useState('')
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [reassignTargetId, setReassignTargetId] = useState('')
   const [bulkReassigning, setBulkReassigning] = useState(false)
-  // confirmAction: null | { type: 'assign'|'delete', monitorId?, monitorName?, count }
   const [confirmAction, setConfirmAction] = useState(null)
   const [editingAgentId, setEditingAgentId] = useState(null)
   const [editAgentValues, setEditAgentValues] = useState({})
@@ -362,40 +362,6 @@ export default function ConstituencyAdminPage() {
     loadBase()
   }
 
-  // Range select — adds all agents with booth in [from,to] to selection
-  function handleRangeSelect() {
-    const from = parseInt(rangeFrom)
-    const to = parseInt(rangeTo)
-    if (isNaN(from) || isNaN(to) || from > to) return
-    const inRange = filteredAgents.filter(a => {
-      const b = parseInt(a.booth_number)
-      return !isNaN(b) && b >= from && b <= to
-    })
-    if (!inRange.length) return
-    setSelectedAgentIds(prev => {
-      const next = new Set(prev)
-      inRange.forEach(a => next.add(a.id))
-      return next
-    })
-  }
-
-  function handleRangeDeselect() {
-    const from = parseInt(rangeFrom)
-    const to = parseInt(rangeTo)
-    if (isNaN(from) || isNaN(to) || from > to) return
-    const inRange = new Set(
-      filteredAgents.filter(a => {
-        const b = parseInt(a.booth_number)
-        return !isNaN(b) && b >= from && b <= to
-      }).map(a => a.id)
-    )
-    setSelectedAgentIds(prev => {
-      const next = new Set(prev)
-      inRange.forEach(id => next.delete(id))
-      return next
-    })
-  }
-
   // Show inline confirmation before executing
   function requestBulkReassign() {
     if (selectedAgentIds.size === 0 || !reassignTargetId) return
@@ -502,11 +468,16 @@ export default function ConstituencyAdminPage() {
   const unassigned = agents.filter(a => !a.assigned_monitor_id)
   const isToday = selectedDate === TODAY
 
+  const boothFilterActive = boothFrom !== '' || boothTo !== ''
   const filteredAgents = agents.filter(a => {
-    // Monitor filter
     if (filterMonitorId === 'unassigned' && a.assigned_monitor_id) return false
     if (filterMonitorId && filterMonitorId !== 'unassigned' && a.assigned_monitor_id !== filterMonitorId) return false
-    // Search filter
+    if (boothFilterActive) {
+      const b = parseInt(a.booth_number)
+      const from = boothFrom !== '' ? parseInt(boothFrom) : -Infinity
+      const to   = boothTo   !== '' ? parseInt(boothTo)   : Infinity
+      if (isNaN(b) || b < from || b > to) return false
+    }
     if (!agentSearch.trim()) return true
     const q = agentSearch.toLowerCase()
     return (
@@ -815,7 +786,7 @@ export default function ConstituencyAdminPage() {
               className="text-sm text-slate-600 font-medium border border-slate-200 px-3 py-2 rounded-xl hover:bg-slate-50 shrink-0">
               Import CSV
             </button>
-            <div className="flex-1 min-w-[180px]">
+            <div className="flex-1 min-w-[160px]">
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
                 <input
@@ -826,7 +797,45 @@ export default function ConstituencyAdminPage() {
                 />
               </div>
             </div>
+            {/* Booth filter toggle */}
+            <button
+              onClick={() => { setShowBoothFilter(v => !v); if (showBoothFilter) { setBoothFrom(''); setBoothTo('') } }}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                boothFilterActive
+                  ? 'bg-zinc-900 text-white border-zinc-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+              }`}
+            >
+              📍 Booth {boothFilterActive ? `${boothFrom || '?'}–${boothTo || '?'}` : 'Filter'}
+              {boothFilterActive && (
+                <span onClick={e => { e.stopPropagation(); setBoothFrom(''); setBoothTo(''); setShowBoothFilter(false) }}
+                  className="ml-1 text-zinc-300 hover:text-white text-xs">✕</span>
+              )}
+            </button>
           </div>
+
+          {/* Booth range filter panel */}
+          {showBoothFilter && (
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
+              <span className="text-xs font-semibold text-slate-600 shrink-0">Booth range:</span>
+              <div className="flex items-center gap-2">
+                <input type="number" placeholder="From" value={boothFrom}
+                  onChange={e => setBoothFrom(e.target.value)}
+                  className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+                <span className="text-slate-400 font-bold">—</span>
+                <input type="number" placeholder="To" value={boothTo}
+                  onChange={e => setBoothTo(e.target.value)}
+                  className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+              </div>
+              {boothFilterActive && (
+                <span className="text-xs text-slate-500">
+                  {filteredAgents.length} agent{filteredAgents.length !== 1 ? 's' : ''} shown
+                </span>
+              )}
+            </div>
+          )}
 
           {/* ── Monitor filter chips ── */}
           <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
@@ -914,58 +923,6 @@ export default function ConstituencyAdminPage() {
                 <p className="text-sm font-semibold text-orange-800">{unassigned.length} agents not assigned to any monitor</p>
                 <p className="text-xs text-orange-600 mt-0.5">Select agents below and use Reassign to assign them</p>
               </div>
-            </div>
-          )}
-
-          {/* ── Range selector ── */}
-          {filteredAgents.length > 0 && (
-            <div className="bg-white border border-slate-200 rounded-xl px-3 py-3">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Select by Booth Range</p>
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="number" placeholder="From" value={rangeFrom}
-                    onChange={e => setRangeFrom(e.target.value)}
-                    className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                  <span className="text-slate-400 text-sm font-bold">—</span>
-                  <input
-                    type="number" placeholder="To" value={rangeTo}
-                    onChange={e => setRangeTo(e.target.value)}
-                    className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                </div>
-                <button
-                  onClick={handleRangeSelect}
-                  disabled={!rangeFrom || !rangeTo}
-                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-semibold rounded-lg transition-colors"
-                >
-                  + Add to Selection
-                </button>
-                <button
-                  onClick={handleRangeDeselect}
-                  disabled={!rangeFrom || !rangeTo}
-                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 disabled:opacity-40 text-slate-600 text-xs font-semibold rounded-lg transition-colors"
-                >
-                  − Remove from Selection
-                </button>
-                {(rangeFrom || rangeTo) && (
-                  <button onClick={() => { setRangeFrom(''); setRangeTo('') }}
-                    className="text-slate-400 hover:text-slate-600 text-xs px-1">
-                    ✕ Clear
-                  </button>
-                )}
-              </div>
-              {rangeFrom && rangeTo && parseInt(rangeFrom) <= parseInt(rangeTo) && (() => {
-                const from = parseInt(rangeFrom), to = parseInt(rangeTo)
-                const count = filteredAgents.filter(a => {
-                  const b = parseInt(a.booth_number)
-                  return !isNaN(b) && b >= from && b <= to
-                }).length
-                return count > 0
-                  ? <p className="text-xs text-slate-500 mt-1.5">{count} agent{count !== 1 ? 's' : ''} in booth range {rangeFrom}–{rangeTo}</p>
-                  : <p className="text-xs text-orange-500 mt-1.5">No agents found in booth {rangeFrom}–{rangeTo}</p>
-              })()}
             </div>
           )}
 
