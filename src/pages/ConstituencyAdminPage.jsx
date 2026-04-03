@@ -48,6 +48,12 @@ export default function ConstituencyAdminPage() {
 
   const [monitors, setMonitors] = useState([])
   const [agents, setAgents] = useState([])
+
+  // Reassignment state
+  const [reassignFrom, setReassignFrom] = useState('')
+  const [reassignTo, setReassignTo] = useState('')
+  const [reassigning, setReassigning] = useState(false)
+  const [reassignResult, setReassignResult] = useState(null)
   const [contents, setContents] = useState([])
   // logMap: { [agent_id]: { [content_id]: { [platform]: log } } }
   const [logMap, setLogMap] = useState({})
@@ -220,6 +226,24 @@ export default function ConstituencyAdminPage() {
         instagram: pct(platformChecked.instagram, opportunities),
       },
     }
+  }
+
+  async function handleReassign() {
+    if (!reassignFrom || !reassignTo || reassignFrom === reassignTo) return
+    const agentsToMove = agents.filter(a => a.assigned_monitor_id === reassignFrom)
+    if (!agentsToMove.length) return
+    setReassigning(true)
+    setReassignResult(null)
+    const { error } = await supabase
+      .from('digital_agents')
+      .update({ assigned_monitor_id: reassignTo })
+      .in('id', agentsToMove.map(a => a.id))
+    if (error) { setError(error.message); setReassigning(false); return }
+    setReassignResult({ count: agentsToMove.length, from: monitors.find(m => m.id === reassignFrom)?.full_name, to: monitors.find(m => m.id === reassignTo)?.full_name })
+    setReassignFrom('')
+    setReassignTo('')
+    setReassigning(false)
+    loadBase()
   }
 
   const unassigned = agents.filter(a => !a.assigned_monitor_id)
@@ -555,32 +579,124 @@ export default function ConstituencyAdminPage() {
 
       {/* ── MONITORS TAB ── */}
       {activeTab === 'Monitors' && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">{monitors.length} monitors</p>
-            <button onClick={() => setShowCreateMonitor(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl">
+            <p className="text-sm text-slate-500">{monitors.length} monitors in this constituency</p>
+            <button onClick={() => setShowCreateMonitor(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">
               + Add Monitor
             </button>
           </div>
+
+          {/* Monitor cards */}
           <div className="space-y-3">
             {monitors.map(m => {
               const assignedCount = agents.filter(a => a.assigned_monitor_id === m.id).length
               return (
-                <div key={m.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                <div key={m.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="font-semibold text-gray-900">{m.full_name}</p>
-                      <p className="text-xs text-gray-500">{m.email}</p>
+                      <p className="font-semibold text-slate-900">{m.full_name}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{m.email}</p>
                     </div>
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">{assignedCount} agents</span>
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                      assignedCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {assignedCount} agent{assignedCount !== 1 ? 's' : ''}
+                    </span>
                   </div>
                 </div>
               )
             })}
             {monitors.length === 0 && (
-              <div className="text-center py-12 text-gray-400 text-sm">No monitors. Click "Add Monitor".</div>
+              <div className="text-center py-12 text-slate-400 text-sm bg-white rounded-xl border border-dashed border-slate-300">
+                No monitors yet. Click "Add Monitor" to create one.
+              </div>
             )}
           </div>
+
+          {/* ── Quick Reassign ── */}
+          {monitors.length >= 2 && (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-lg shrink-0">🔄</div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Quick Reassign</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Move all agents from one monitor to another — use when a monitor is absent or unavailable.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-center">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">From (absent monitor)</label>
+                  <select
+                    value={reassignFrom}
+                    onChange={e => { setReassignFrom(e.target.value); setReassignResult(null) }}
+                    className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Select monitor…</option>
+                    {monitors.map(m => {
+                      const n = agents.filter(a => a.assigned_monitor_id === m.id).length
+                      return <option key={m.id} value={m.id}>{m.full_name} ({n} agents)</option>
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex items-end justify-center pb-1 text-slate-400 font-bold text-lg">→</div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">To (replacement monitor)</label>
+                  <select
+                    value={reassignTo}
+                    onChange={e => { setReassignTo(e.target.value); setReassignResult(null) }}
+                    className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Select monitor…</option>
+                    {monitors.filter(m => m.id !== reassignFrom).map(m => {
+                      const n = agents.filter(a => a.assigned_monitor_id === m.id).length
+                      return <option key={m.id} value={m.id}>{m.full_name} (currently {n} agents)</option>
+                    })}
+                  </select>
+                </div>
+              </div>
+
+              {/* Preview count */}
+              {reassignFrom && reassignTo && reassignFrom !== reassignTo && (() => {
+                const count = agents.filter(a => a.assigned_monitor_id === reassignFrom).length
+                const fromName = monitors.find(m => m.id === reassignFrom)?.full_name
+                const toName = monitors.find(m => m.id === reassignTo)?.full_name
+                return (
+                  <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800">
+                    <span className="font-semibold">{count} agent{count !== 1 ? 's' : ''}</span> will move from{' '}
+                    <span className="font-semibold">{fromName}</span> to{' '}
+                    <span className="font-semibold">{toName}</span>.
+                  </div>
+                )
+              })()}
+
+              {reassignResult && (
+                <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 text-sm text-emerald-700">
+                  ✓ {reassignResult.count} agent{reassignResult.count !== 1 ? 's' : ''} moved from{' '}
+                  <span className="font-semibold">{reassignResult.from}</span> to{' '}
+                  <span className="font-semibold">{reassignResult.to}</span>.
+                </div>
+              )}
+
+              <button
+                onClick={handleReassign}
+                disabled={reassigning || !reassignFrom || !reassignTo || reassignFrom === reassignTo ||
+                  agents.filter(a => a.assigned_monitor_id === reassignFrom).length === 0}
+                className="mt-4 w-full bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm flex items-center justify-center gap-2"
+              >
+                {reassigning ? (
+                  <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Reassigning…</>
+                ) : (
+                  <>🔄 Reassign All Agents</>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

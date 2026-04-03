@@ -393,6 +393,7 @@ export default function MonitorPage() {
                     logsByPlatform={getAgentLogs(agent.id)}
                     onToggle={(agentId, platform, checked) => handleToggle(agentId, platform, checked)}
                     saving={saving}
+                    content={selectedContent}
                   />
                 ))}
               </div>

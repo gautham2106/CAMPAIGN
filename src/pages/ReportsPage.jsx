@@ -272,7 +272,7 @@ export default function ReportsPage() {
   return (
     <Layout title="Reports">
       {/* ── Filter panel ── */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6 print:hidden">
         <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wide mb-4">Filters</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
@@ -329,17 +329,27 @@ export default function ReportsPage() {
               {r.label}
             </button>
           ))}
-          <button
-            onClick={runReport}
-            disabled={loading}
-            className="ml-auto sm:ml-0 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
-          >
-            {loading ? (
-              <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Running…</>
-            ) : (
-              <><span>📊</span>Run Report</>
+          <div className="flex gap-2 ml-auto sm:ml-0">
+            <button
+              onClick={runReport}
+              disabled={loading}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+            >
+              {loading ? (
+                <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Running…</>
+              ) : (
+                <><span>📊</span>Run Report</>
+              )}
+            </button>
+            {report && !report.empty && (
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors print:hidden"
+              >
+                <span>🖨️</span>Export PDF
+              </button>
             )}
-          </button>
+          </div>
         </div>
       </div>
 
@@ -368,7 +378,22 @@ export default function ReportsPage() {
 
       {/* ── Report results ── */}
       {report && !report.empty && (
-        <div className="space-y-6">
+        <div className="space-y-6" id="report-output">
+
+          {/* Print-only header */}
+          <div className="hidden print:block mb-2 pb-4 border-b border-slate-300">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="font-black text-lg text-slate-900">Campaign Monitor</span>
+              <span className="text-slate-400">·</span>
+              <span className="font-semibold text-slate-600">Compliance Report</span>
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
+              <span>Period: <strong className="text-slate-700">{dateFrom}</strong> → <strong className="text-slate-700">{dateTo}</strong></span>
+              {selConst !== 'all' && <span>Constituency: <strong className="text-slate-700">{constituencies.find(c => c.id === selConst)?.name ?? '—'}</strong></span>}
+              {selContent !== 'all' && <span>Content: <strong className="text-slate-700">{contentList.find(c => c.id === selContent)?.title ?? '—'}</strong></span>}
+              <span>Generated: <strong className="text-slate-700">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
+            </div>
+          </div>
           {/* Summary cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard icon="🗳️" label="Agents" value={report.totalAgents} accent="indigo" />
@@ -398,7 +423,7 @@ export default function ReportsPage() {
           </div>
 
           {/* View selector */}
-          <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit">
+          <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit print:hidden">
             {views.map(v => (
               <button key={v.key} onClick={() => setView(v.key)}
                 className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
@@ -409,10 +434,34 @@ export default function ReportsPage() {
             ))}
           </div>
 
-          {/* Tables */}
-          {view === 'day' && <DataTable rows={report.byDay} groupLabel="Date" />}
-          {view === 'content' && <DataTable rows={report.byContent} groupLabel="Content" />}
-          {view === 'constituency' && <DataTable rows={report.byConst} groupLabel="Constituency" />}
+          {/* Interactive tables — screen only */}
+          <div className="print:hidden">
+            {view === 'day'          && <DataTable rows={report.byDay}     groupLabel="Date"           />}
+            {view === 'content'      && <DataTable rows={report.byContent}  groupLabel="Content"        />}
+            {view === 'constituency' && <DataTable rows={report.byConst}    groupLabel="Constituency"   />}
+          </div>
+
+          {/* Print — all tables always rendered */}
+          <div className="hidden print:block space-y-8">
+            {report.byDay.length > 0 && (
+              <div>
+                <h2 className="font-bold text-slate-800 mb-2 text-sm uppercase tracking-wide">By Day</h2>
+                <DataTable rows={report.byDay} groupLabel="Date" />
+              </div>
+            )}
+            {report.byContent.length > 0 && (
+              <div>
+                <h2 className="font-bold text-slate-800 mb-2 text-sm uppercase tracking-wide">By Content</h2>
+                <DataTable rows={report.byContent} groupLabel="Content" />
+              </div>
+            )}
+            {report.byConst?.length > 0 && (
+              <div>
+                <h2 className="font-bold text-slate-800 mb-2 text-sm uppercase tracking-wide">By Constituency</h2>
+                <DataTable rows={report.byConst} groupLabel="Constituency" />
+              </div>
+            )}
+          </div>
         </div>
       )}
     </Layout>
