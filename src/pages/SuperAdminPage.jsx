@@ -708,12 +708,12 @@ export default function SuperAdminPage() {
               constituencies.map(c => {
                 const cAgentIds = allAgents.filter(a => a.constituency_id === c.id)
                 const monCount = allMonitors.filter(m => m.constituency_id === c.id).length
-                const adminName = constAdmins.find(a => a.constituency_id === c.id)?.full_name
+                const adminNames = constAdmins.filter(a => a.constituency_id === c.id).map(a => a.full_name)
                 return (
                   <div key={c.id} className="px-5 py-3 flex items-center justify-between">
                     <div>
                       <span className="font-medium text-gray-800 text-sm">{c.name}</span>
-                      {adminName && <p className="text-xs text-gray-400">Admin: {adminName}</p>}
+                      {adminNames.length > 0 && <p className="text-xs text-gray-400">Admin{adminNames.length > 1 ? 's' : ''}: {adminNames.join(', ')}</p>}
                     </div>
                     <p className="text-xs text-gray-400">{cAgentIds.length} agents · {monCount} monitors</p>
                   </div>
