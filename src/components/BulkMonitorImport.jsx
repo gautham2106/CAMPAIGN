@@ -1,13 +1,13 @@
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import Papa from 'papaparse'
-import { supabaseAdmin } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 
 const COL_MAP = {
-  full_name: ['full name', 'name', 'பெயர்', 'monitor name'],
-  phone:     ['mobile number', 'mobile', 'phone', 'whatsapp', 'contact', 'mobile no'],
-  email:     ['email', 'email address', 'mail'],
-  password:  ['password', 'temp password', 'temporary password', 'pass'],
+  full_name: ['full name', 'name', 'பெயர்', 'monitor name', 'fullname'],
+  phone:     ['mobile number', 'mobile', 'phone', 'whatsapp', 'contact', 'mobile no', 'ph no', 'phone number'],
+  email:     ['email', 'email address', 'mail', 'email id', 'emailid', 'e-mail', 'email-id'],
+  password:  ['password', 'temp password', 'temporary password', 'pass', 'pwd'],
 }
 
 function mapRow(row, headers) {
@@ -20,38 +20,68 @@ function mapRow(row, headers) {
       }
     }
   }
+  // Always normalize email to lowercase
+  if (result.email) result.email = result.email.toLowerCase().trim()
   return result
 }
 
 function validateRow(r) {
   if (!r.full_name) return 'Missing name'
-  if (!r.email || !r.email.includes('@')) return 'Invalid email'
-  if (!r.password || r.password.length < 8) return 'Password must be 8+ characters'
+  if (!r.email || !r.email.includes('@')) return 'Invalid or missing email'
+  if (!r.password || r.password.length < 8) return 'Password must be 8+ chars'
   return null
 }
 
 export default function BulkMonitorImport({ constituencyId, onImported, onClose }) {
-  const [rows, setRows]           = useState([])   // parsed + validated rows
+  const [rows, setRows]           = useState([])
+  const [checking, setChecking]   = useState(false)
   const [importing, setImporting] = useState(false)
-  const [progress, setProgress]   = useState(null) // { done, total, results[] }
+  const [progress, setProgress]   = useState(null)
   const [error, setError]         = useState('')
 
-  const onDrop = useCallback((acceptedFiles) => {
+  const onDrop = useCallback(async (acceptedFiles) => {
     setError('')
     setRows([])
     setProgress(null)
     const file = acceptedFiles[0]
     if (!file) return
+
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
+      complete: async (results) => {
         const headers = results.meta.fields ?? []
         const parsed = results.data.map(row => {
           const r = mapRow(row, headers)
           return { ...r, _error: validateRow(r) }
         })
-        setRows(parsed)
+
+        // Check which emails already exist as monitor profiles
+        setChecking(true)
+        try {
+          const validEmails = parsed.filter(r => !r._error).map(r => r.email)
+          let existingEmails = new Set()
+
+          if (validEmails.length > 0) {
+            const { data: existing } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('role', 'monitor')
+              .in('email', validEmails)
+            existingEmails = new Set((existing ?? []).map(p => p.email.toLowerCase()))
+          }
+
+          const classified = parsed.map(r => {
+            if (r._error) return r
+            if (existingEmails.has(r.email)) return { ...r, _error: 'Already a monitor', _duplicate: true }
+            return r
+          })
+          setRows(classified)
+        } catch (e) {
+          setError(e.message)
+        } finally {
+          setChecking(false)
+        }
       },
       error: (err) => setError(err.message),
     })
@@ -63,44 +93,78 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
     multiple: false,
   })
 
-  const validRows   = rows.filter(r => !r._error)
-  const invalidRows = rows.filter(r => r._error)
+  const readyRows   = rows.filter(r => !r._error)
+  const skippedRows = rows.filter(r => r._error)
 
   async function handleImport() {
-    if (!validRows.length) return
+    if (!readyRows.length) return
     if (!supabaseAdmin) {
       setError('Service role key not configured. Add VITE_SUPABASE_SERVICE_ROLE_KEY to .env')
       return
     }
     setImporting(true)
-    setProgress({ done: 0, total: validRows.length, results: [] })
+    setProgress({ done: 0, total: readyRows.length, results: [] })
 
     const results = []
-    for (let i = 0; i < validRows.length; i++) {
-      const r = validRows[i]
+    for (let i = 0; i < readyRows.length; i++) {
+      const r = readyRows[i]
       try {
+        // Step 1: create auth user
         const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
           email: r.email,
           password: r.password,
           email_confirm: true,
         })
-        if (authErr) throw authErr
 
-        const { error: profileErr } = await supabaseAdmin.from('profiles').insert({
-          id: authData.user.id,
-          full_name: r.full_name,
-          email: r.email,
-          phone: r.phone || null,
-          role: 'monitor',
-          constituency_id: constituencyId,
-        })
-        if (profileErr) throw profileErr
-
-        results.push({ name: r.full_name, email: r.email, status: 'ok' })
+        if (authErr) {
+          // Auth user already exists (orphaned — no profile row)
+          // Try to recover: find all users and match by email
+          if (authErr.message?.toLowerCase().includes('already been registered') ||
+              authErr.message?.toLowerCase().includes('already registered') ||
+              authErr.message?.toLowerCase().includes('already exists')) {
+            // Try recovery: list users and find by email
+            let recovered = false
+            try {
+              const { data: listData } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+              const existing = listData?.users?.find(u => u.email?.toLowerCase() === r.email)
+              if (existing) {
+                // Auth user exists — just create the missing profile
+                const { error: profileErr } = await supabaseAdmin.from('profiles').insert({
+                  id: existing.id,
+                  full_name: r.full_name,
+                  email: r.email,
+                  phone: r.phone || null,
+                  role: 'monitor',
+                  constituency_id: constituencyId,
+                })
+                if (profileErr) throw new Error('Profile creation failed: ' + profileErr.message)
+                results.push({ name: r.full_name, email: r.email, status: 'ok', note: 'recovered' })
+                recovered = true
+              }
+            } catch (recoverErr) {
+              // Recovery failed — report original error
+            }
+            if (!recovered) throw new Error('Email already registered in auth but recovery failed. Delete the orphaned user from Supabase Auth dashboard first.')
+          } else {
+            throw authErr
+          }
+        } else {
+          // Step 2: create profile
+          const { error: profileErr } = await supabaseAdmin.from('profiles').insert({
+            id: authData.user.id,
+            full_name: r.full_name,
+            email: r.email,
+            phone: r.phone || null,
+            role: 'monitor',
+            constituency_id: constituencyId,
+          })
+          if (profileErr) throw new Error('Profile creation failed: ' + profileErr.message)
+          results.push({ name: r.full_name, email: r.email, status: 'ok' })
+        }
       } catch (e) {
         results.push({ name: r.full_name, email: r.email, status: 'error', message: e.message })
       }
-      setProgress({ done: i + 1, total: validRows.length, results: [...results] })
+      setProgress({ done: i + 1, total: readyRows.length, results: [...results] })
     }
 
     setImporting(false)
@@ -123,12 +187,11 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
         </div>
 
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
-          {/* CSV template hint */}
+          {/* CSV format hint */}
           <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3">
-            <p className="text-xs font-semibold text-zinc-600 mb-1">CSV format (first row = headers):</p>
-            <code className="text-xs text-zinc-500 font-mono">
-              Full Name, Mobile Number, Email, Password
-            </code>
+            <p className="text-xs font-semibold text-zinc-600 mb-1">CSV format (first row = column headers):</p>
+            <code className="text-xs text-zinc-500 font-mono block">Full Name, Mobile Number, Email, Password</code>
+            <p className="text-xs text-zinc-400 mt-1.5">Emails are automatically lowercased. Existing monitors are skipped.</p>
           </div>
 
           {/* Drop zone */}
@@ -141,14 +204,20 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
             >
               <input {...getInputProps()} />
               <div className="text-3xl mb-2">📋</div>
-              {isDragActive ? (
-                <p className="text-red-600 font-semibold text-sm">Drop CSV here…</p>
-              ) : (
-                <>
-                  <p className="text-slate-700 font-semibold text-sm">Drag & drop CSV or click to browse</p>
-                  <p className="text-slate-400 text-xs mt-1">One monitor per row</p>
-                </>
-              )}
+              {isDragActive
+                ? <p className="text-red-600 font-semibold text-sm">Drop CSV here…</p>
+                : <>
+                    <p className="text-slate-700 font-semibold text-sm">Drag & drop CSV or click to browse</p>
+                    <p className="text-slate-400 text-xs mt-1">One monitor per row</p>
+                  </>
+              }
+            </div>
+          )}
+
+          {checking && (
+            <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 rounded-xl px-4 py-3 border border-slate-200">
+              <span className="w-4 h-4 border-2 border-slate-300 border-t-red-500 rounded-full animate-spin shrink-0" />
+              Checking for existing monitors…
             </div>
           )}
 
@@ -159,19 +228,24 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
           {/* Preview — before import */}
           {rows.length > 0 && !progress && (
             <>
-              {/* Summary */}
               <div className="flex gap-2 flex-wrap">
-                <span className="text-xs font-semibold bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full">
-                  ✓ {validRows.length} ready to import
-                </span>
-                {invalidRows.length > 0 && (
+                {readyRows.length > 0 && (
+                  <span className="text-xs font-semibold bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full">
+                    ✓ {readyRows.length} ready
+                  </span>
+                )}
+                {skippedRows.filter(r => r._duplicate).length > 0 && (
+                  <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-3 py-1 rounded-full">
+                    ↩ {skippedRows.filter(r => r._duplicate).length} already exist (skip)
+                  </span>
+                )}
+                {skippedRows.filter(r => !r._duplicate).length > 0 && (
                   <span className="text-xs font-semibold bg-red-100 text-red-600 px-3 py-1 rounded-full">
-                    ✕ {invalidRows.length} invalid (will skip)
+                    ✕ {skippedRows.filter(r => !r._duplicate).length} invalid (skip)
                   </span>
                 )}
               </div>
 
-              {/* Preview table */}
               <div className="overflow-x-auto rounded-xl border border-slate-200">
                 <table className="text-xs w-full">
                   <thead className="bg-slate-50 border-b border-slate-200">
@@ -183,22 +257,22 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {rows.slice(0, 10).map((r, i) => (
-                      <tr key={i} className={r._error ? 'bg-red-50' : ''}>
+                    {rows.slice(0, 12).map((r, i) => (
+                      <tr key={i} className={r._error ? (r._duplicate ? 'bg-amber-50' : 'bg-red-50') : ''}>
                         <td className="px-3 py-2 font-medium text-slate-800">{r.full_name || <span className="text-red-400 italic">—</span>}</td>
                         <td className="px-3 py-2 text-slate-500 font-mono">{r.phone || '—'}</td>
-                        <td className="px-3 py-2 text-slate-600">{r.email || <span className="text-red-400 italic">—</span>}</td>
-                        <td className="px-3 py-2">
-                          {r._error
-                            ? <span className="text-red-500 font-semibold">{r._error}</span>
-                            : <span className="text-emerald-600 font-semibold">Ready</span>}
+                        <td className="px-3 py-2 text-slate-600 font-mono text-xs">{r.email || <span className="text-red-400 italic">—</span>}</td>
+                        <td className="px-3 py-2 font-semibold">
+                          {!r._error && <span className="text-emerald-600">Ready</span>}
+                          {r._duplicate && <span className="text-amber-600">Already exists</span>}
+                          {r._error && !r._duplicate && <span className="text-red-500">{r._error}</span>}
                         </td>
                       </tr>
                     ))}
-                    {rows.length > 10 && (
+                    {rows.length > 12 && (
                       <tr>
-                        <td colSpan={4} className="px-3 py-2 text-slate-400 text-center">
-                          …and {rows.length - 10} more rows
+                        <td colSpan={4} className="px-3 py-2.5 text-slate-400 text-center">
+                          …and {rows.length - 12} more rows
                         </td>
                       </tr>
                     )}
@@ -206,26 +280,24 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
                 </table>
               </div>
 
-              {/* Actions */}
               <div className="flex gap-3">
                 <button onClick={() => setRows([])}
                   className="flex-1 border border-slate-300 text-slate-600 text-sm font-medium py-2.5 rounded-xl hover:bg-slate-50">
                   ← Re-upload
                 </button>
-                {validRows.length > 0 && (
+                {readyRows.length > 0 && (
                   <button onClick={handleImport}
                     className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold py-2.5 rounded-xl">
-                    Import {validRows.length} Monitor{validRows.length !== 1 ? 's' : ''}
+                    Import {readyRows.length} Monitor{readyRows.length !== 1 ? 's' : ''}
                   </button>
                 )}
               </div>
             </>
           )}
 
-          {/* Progress — during / after import */}
+          {/* Progress */}
           {progress && (
             <div className="space-y-3">
-              {/* Progress bar */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-sm font-semibold text-slate-700">
@@ -234,24 +306,21 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
                   <span className="text-xs text-slate-500">{Math.round(progress.done / progress.total * 100)}%</span>
                 </div>
                 <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-300 ${isDone ? 'bg-emerald-500' : 'bg-red-500'}`}
-                    style={{ width: `${progress.done / progress.total * 100}%` }}
-                  />
+                  <div className={`h-full rounded-full transition-all duration-300 ${isDone ? 'bg-emerald-500' : 'bg-red-500'}`}
+                    style={{ width: `${progress.done / progress.total * 100}%` }} />
                 </div>
               </div>
 
-              {/* Per-row results */}
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {progress.results.map((r, i) => (
-                  <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs ${
-                    r.status === 'ok' ? 'bg-emerald-50' : 'bg-red-50'
-                  }`}>
+                  <div key={i} className={`flex items-start gap-3 px-3 py-2 rounded-lg text-xs ${r.status === 'ok' ? 'bg-emerald-50' : 'bg-red-50'}`}>
                     <span className="text-base shrink-0">{r.status === 'ok' ? '✅' : '❌'}</span>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-800 truncate">{r.name}</p>
                       <p className={`truncate ${r.status === 'ok' ? 'text-emerald-600' : 'text-red-500'}`}>
-                        {r.status === 'ok' ? r.email : r.message}
+                        {r.status === 'ok'
+                          ? r.note === 'recovered' ? `${r.email} (recovered orphaned account)` : r.email
+                          : r.message}
                       </p>
                     </div>
                   </div>
@@ -259,15 +328,14 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
                 {importing && progress.done < progress.total && (
                   <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 text-xs">
                     <span className="w-4 h-4 border-2 border-slate-300 border-t-red-500 rounded-full animate-spin shrink-0" />
-                    <span className="text-slate-500">Creating {validRows[progress.done]?.full_name}…</span>
+                    <span className="text-slate-500">Creating {readyRows[progress.done]?.full_name}…</span>
                   </div>
                 )}
               </div>
 
-              {/* Done summary */}
               {isDone && (
                 <div className="pt-2 border-t border-slate-200">
-                  <div className="flex gap-3 mb-3">
+                  <div className="flex gap-2 flex-wrap mb-3">
                     <span className="text-xs bg-emerald-100 text-emerald-700 font-semibold px-3 py-1 rounded-full">
                       ✅ {progress.results.filter(r => r.status === 'ok').length} created
                     </span>
@@ -277,6 +345,11 @@ export default function BulkMonitorImport({ constituencyId, onImported, onClose 
                       </span>
                     )}
                   </div>
+                  {progress.results.some(r => r.status === 'error') && (
+                    <p className="text-xs text-slate-500 mb-3">
+                      For failed emails that say "already registered" — go to Supabase → Authentication → Users, delete those orphaned entries, then re-import.
+                    </p>
+                  )}
                   <button onClick={onClose}
                     className="w-full bg-zinc-900 hover:bg-zinc-700 text-white text-sm font-semibold py-2.5 rounded-xl">
                     Done
