@@ -31,6 +31,31 @@ function mapRow(row, headers) {
   return result
 }
 
+function parseTimestamp(raw) {
+  if (!raw) return null
+  try {
+    // Google Forms exports like "10/15/2024 14:30:00" or "15/10/2024 2:30:00 PM"
+    // Try native parse first
+    let d = new Date(raw)
+    if (!isNaN(d.getTime())) return d.toISOString()
+
+    // Try DD/MM/YYYY HH:MM:SS (Indian format from Google Forms)
+    const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?/i)
+    if (match) {
+      const [, dd, mm, yyyy, hh, min, ss = '0', ampm] = match
+      let hours = parseInt(hh)
+      if (ampm?.toUpperCase() === 'PM' && hours < 12) hours += 12
+      if (ampm?.toUpperCase() === 'AM' && hours === 12) hours = 0
+      d = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd), hours, parseInt(min), parseInt(ss))
+      if (!isNaN(d.getTime())) return d.toISOString()
+    }
+
+    return null // unparseable — skip gracefully
+  } catch {
+    return null
+  }
+}
+
 function toDbRow(r, constituencyId) {
   return {
     name: r.name,
@@ -40,7 +65,7 @@ function toDbRow(r, constituencyId) {
     fb_url: r.fb_url,
     ig_url: r.ig_url,
     twitter_url: r.twitter_url,
-    submitted_at: r.submitted_at ? new Date(r.submitted_at).toISOString() : null,
+    submitted_at: parseTimestamp(r.submitted_at),
     constituency_id: constituencyId,
   }
 }
