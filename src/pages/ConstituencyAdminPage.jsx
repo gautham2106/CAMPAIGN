@@ -5,6 +5,7 @@ import Layout from '../components/Layout'
 import CSVImport from '../components/CSVImport'
 import BulkAssign from '../components/BulkAssign'
 import CreateMonitorModal from '../components/CreateMonitorModal'
+import BulkMonitorImport from '../components/BulkMonitorImport'
 import MiniCalendar from '../components/MiniCalendar'
 
 function AddAgentModal({ constituencyId, onAdded, onClose }) {
@@ -152,6 +153,7 @@ export default function ConstituencyAdminPage() {
 
   const [loading, setLoading] = useState(true)
   const [showCreateMonitor, setShowCreateMonitor] = useState(false)
+  const [showBulkMonitor, setShowBulkMonitor] = useState(false)
   const [drillMonitor, setDrillMonitor] = useState(null) // { monitor, agents, contentIds }
   const [error, setError] = useState('')
 
@@ -510,6 +512,14 @@ export default function ConstituencyAdminPage() {
           constituencyId={constituencyId}
           onCreated={loadBase}
           onClose={() => setShowCreateMonitor(false)}
+        />
+      )}
+
+      {showBulkMonitor && (
+        <BulkMonitorImport
+          constituencyId={constituencyId}
+          onImported={loadBase}
+          onClose={() => setShowBulkMonitor(false)}
         />
       )}
 
@@ -1160,11 +1170,18 @@ export default function ConstituencyAdminPage() {
       {/* ── MONITORS TAB ── */}
       {activeTab === 'Monitors' && (
         <div className="space-y-5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-slate-500">{monitors.length} monitors in this constituency</p>
-            <button onClick={() => setShowCreateMonitor(true)} className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">
-              + Add Monitor
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowBulkMonitor(true)}
+                className="text-sm text-slate-600 font-medium border border-slate-200 px-3 py-2 rounded-xl hover:bg-slate-50">
+                Import CSV
+              </button>
+              <button onClick={() => setShowCreateMonitor(true)}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded-xl">
+                + Add Monitor
+              </button>
+            </div>
           </div>
 
           {/* Monitor cards */}
