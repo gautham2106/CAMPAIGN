@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 import AgentCard from '../components/AgentCard'
@@ -87,7 +87,10 @@ export default function MonitorPage() {
         if (!error) setAgents(data ?? [])
       })
     if (profile?.constituency_id) {
-      supabase
+      // Use admin client to bypass RLS — monitors can only read their own rows,
+      // but we need all constituency assignments to detect cross-monitor booth changes.
+      const client = supabaseAdmin ?? supabase
+      client
         .from('monitor_booth_assignments')
         .select('*')
         .eq('constituency_id', profile.constituency_id)
