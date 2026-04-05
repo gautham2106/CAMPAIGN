@@ -101,7 +101,7 @@ function AddAgentModal({ constituencyId, onAdded, onClose }) {
 }
 
 const TODAY = new Date().toISOString().split('T')[0]
-const TABS = ['Overview', 'Agents', 'Monitors', 'Import']
+const TABS = ['Overview', 'Agents', 'Monitors', 'Booths', 'Import']
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 const P_LABEL = { whatsapp: 'WA', facebook: 'FB', instagram: 'IG' }
 
@@ -141,6 +141,17 @@ export default function ConstituencyAdminPage() {
 
   const [monitors, setMonitors] = useState([])
   const [agents, setAgents] = useState([])
+  const [boothAssignments, setBoothAssignments] = useState([])
+
+  // Booths tab state
+  const [showAddBooth, setShowAddBooth] = useState(false)
+  const [boothForm, setBoothForm] = useState({ monitor_id: '', booth_from: '', booth_to: '' })
+  const [savingBooth, setSavingBooth] = useState(false)
+  const [editingBoothId, setEditingBoothId] = useState(null)
+  const [editBoothValues, setEditBoothValues] = useState({})
+  const [deletingBoothId, setDeletingBoothId] = useState(null)
+  const [autoAssigning, setAutoAssigning] = useState(false)
+  const [autoAssignResult, setAutoAssignResult] = useState(null)
 
   // Reassignment state
   const [reassignFrom, setReassignFrom] = useState('')
@@ -202,14 +213,16 @@ export default function ConstituencyAdminPage() {
     setLoading(true)
     setError('')
     try {
-      const [monitorsRes, agentsRes] = await Promise.all([
+      const [monitorsRes, agentsRes, boothRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).order('full_name'),
         supabase.from('digital_agents').select('*').eq('constituency_id', constituencyId).order('booth_number'),
+        supabase.from('monitor_booth_assignments').select('*').eq('constituency_id', constituencyId).order('booth_from'),
       ])
       if (monitorsRes.error) throw monitorsRes.error
       if (agentsRes.error) throw agentsRes.error
       setMonitors(monitorsRes.data ?? [])
       setAgents(agentsRes.data ?? [])
+      setBoothAssignments(boothRes.data ?? [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -426,15 +439,30 @@ export default function ConstituencyAdminPage() {
     })
   }
 
+  // Find which monitor owns a given booth number based on assignments
+  function findMonitorForBooth(boothNum) {
+    if (!boothNum && boothNum !== 0) return null
+    const n = parseInt(boothNum)
+    if (isNaN(n)) return null
+    return boothAssignments.find(a => n >= a.booth_from && n <= a.booth_to)?.monitor_id ?? null
+  }
+
   async function saveEditAgent(agentId) {
     setSavingEdit(true)
-    const { error } = await supabase.from('digital_agents').update({
+    const newBooth = editAgentValues.booth_number !== '' ? parseInt(editAgentValues.booth_number) : null
+    const updateData = {
       name: editAgentValues.name.trim(),
       phone: editAgentValues.phone.trim() || null,
-      booth_number: editAgentValues.booth_number !== '' ? parseInt(editAgentValues.booth_number) : null,
+      booth_number: newBooth,
       fb_url: editAgentValues.fb_url.trim() || null,
       ig_url: editAgentValues.ig_url.trim() || null,
-    }).eq('id', agentId)
+    }
+    // Auto-reassign to correct monitor based on booth range
+    if (newBooth != null) {
+      const assignedMonitor = findMonitorForBooth(newBooth)
+      if (assignedMonitor !== null) updateData.assigned_monitor_id = assignedMonitor
+    }
+    const { error } = await supabase.from('digital_agents').update(updateData).eq('id', agentId)
     if (error) setError(error.message)
     else { setEditingAgentId(null); loadBase() }
     setSavingEdit(false)
@@ -465,6 +493,67 @@ export default function ConstituencyAdminPage() {
     }
     loadBase()
     setDeletingMonitorId(null)
+  }
+
+  // ── BOOTH ASSIGNMENT CRUD ──────────────────────────────
+  async function handleAddBooth(e) {
+    e.preventDefault()
+    if (!boothForm.monitor_id || boothForm.booth_from === '' || boothForm.booth_to === '') return
+    const from = parseInt(boothForm.booth_from)
+    const to = parseInt(boothForm.booth_to)
+    if (isNaN(from) || isNaN(to) || from > to) { setError('Invalid booth range: From must be ≤ To'); return }
+    setSavingBooth(true)
+    const { error } = await supabase.from('monitor_booth_assignments').insert({
+      monitor_id: boothForm.monitor_id,
+      constituency_id: constituencyId,
+      booth_from: from,
+      booth_to: to,
+    })
+    if (error) setError(error.message)
+    else { setBoothForm({ monitor_id: '', booth_from: '', booth_to: '' }); setShowAddBooth(false); loadBase() }
+    setSavingBooth(false)
+  }
+
+  async function handleSaveEditBooth(id) {
+    const from = parseInt(editBoothValues.booth_from)
+    const to = parseInt(editBoothValues.booth_to)
+    if (isNaN(from) || isNaN(to) || from > to) { setError('Invalid booth range'); return }
+    const { error } = await supabase.from('monitor_booth_assignments')
+      .update({ monitor_id: editBoothValues.monitor_id, booth_from: from, booth_to: to })
+      .eq('id', id)
+    if (error) setError(error.message)
+    else { setEditingBoothId(null); loadBase() }
+  }
+
+  async function handleDeleteBooth(id) {
+    if (!window.confirm('Delete this booth range assignment?')) return
+    setDeletingBoothId(id)
+    const { error } = await supabase.from('monitor_booth_assignments').delete().eq('id', id)
+    if (error) setError(error.message)
+    else loadBase()
+    setDeletingBoothId(null)
+  }
+
+  // Auto-assign all agents to monitors based on booth ranges
+  async function handleAutoAssign() {
+    if (!window.confirm(`Auto-assign all ${agents.length} agents to monitors based on booth ranges?\nAgents outside any range stay unchanged.`)) return
+    setAutoAssigning(true)
+    setAutoAssignResult(null)
+    let assigned = 0, skipped = 0
+    for (const agent of agents) {
+      if (!agent.booth_number) { skipped++; continue }
+      const monitorId = findMonitorForBooth(agent.booth_number)
+      if (monitorId === null) { skipped++; continue }
+      if (agent.assigned_monitor_id === monitorId) { skipped++; continue }
+      const { error } = await supabase.from('digital_agents')
+        .update({ assigned_monitor_id: monitorId })
+        .eq('id', agent.id)
+      if (error) { setError(error.message); break }
+      assigned++
+    }
+    setAutoAssigning(false)
+    setAutoAssignResult({ assigned, skipped })
+    loadBase()
   }
 
   const unassigned = agents.filter(a => !a.assigned_monitor_id)
@@ -1324,6 +1413,164 @@ export default function ConstituencyAdminPage() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── BOOTHS TAB ── */}
+      {activeTab === 'Booths' && (
+        <div className="max-w-2xl space-y-4">
+          {/* Header + actions */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-semibold text-gray-900">Booth Assignments</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Assign permanent booth ranges to monitors. Use Auto-assign to update all agents at once.</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAutoAssign}
+                disabled={autoAssigning || boothAssignments.length === 0}
+                className="bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-300 text-white text-sm font-semibold px-3 py-2 rounded-xl transition-colors"
+              >
+                {autoAssigning ? 'Assigning…' : '⚡ Auto-assign Agents'}
+              </button>
+              <button
+                onClick={() => { setShowAddBooth(true); setBoothForm({ monitor_id: '', booth_from: '', booth_to: '' }) }}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-3 py-2 rounded-xl"
+              >
+                + Add Range
+              </button>
+            </div>
+          </div>
+
+          {/* Auto-assign result */}
+          {autoAssignResult && (
+            <div className="bg-green-50 border border-green-200 text-green-800 text-sm rounded-xl px-4 py-3 flex items-center justify-between">
+              <span>✓ {autoAssignResult.assigned} agents reassigned · {autoAssignResult.skipped} skipped (no range / already correct)</span>
+              <button onClick={() => setAutoAssignResult(null)} className="text-green-600 hover:text-green-800 ml-3 text-lg leading-none">&times;</button>
+            </div>
+          )}
+
+          {/* Add Range form */}
+          {showAddBooth && (
+            <form onSubmit={handleAddBooth} className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+              <p className="text-sm font-semibold text-gray-800">New Booth Range</p>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Monitor *</label>
+                <select required value={boothForm.monitor_id} onChange={e => setBoothForm(p => ({ ...p, monitor_id: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+                  <option value="">Select monitor…</option>
+                  {monitors.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Booth From *</label>
+                  <input type="number" required min={1} value={boothForm.booth_from}
+                    onChange={e => setBoothForm(p => ({ ...p, booth_from: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    placeholder="e.g. 1" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Booth To *</label>
+                  <input type="number" required min={1} value={boothForm.booth_to}
+                    onChange={e => setBoothForm(p => ({ ...p, booth_to: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    placeholder="e.g. 50" />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setShowAddBooth(false)} className="flex-1 border border-slate-300 text-slate-700 text-sm py-2 rounded-lg hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={savingBooth} className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold text-sm py-2 rounded-lg">
+                  {savingBooth ? 'Saving…' : 'Save Range'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Assignment list */}
+          {boothAssignments.length === 0 ? (
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 p-10 text-center text-gray-400 text-sm">
+              No booth ranges assigned yet. Click "+ Add Range" to start.
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+              {/* Group by monitor for clarity */}
+              {monitors.map(mon => {
+                const ranges = boothAssignments.filter(a => a.monitor_id === mon.id)
+                if (ranges.length === 0) return null
+                const monAgents = agents.filter(a => a.assigned_monitor_id === mon.id)
+                return (
+                  <div key={mon.id} className="p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className="font-semibold text-gray-800 text-sm">{mon.full_name}</p>
+                        <p className="text-xs text-gray-400">{monAgents.length} agents assigned</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {ranges.map(r => (
+                        <div key={r.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2">
+                          {editingBoothId === r.id ? (
+                            <>
+                              <select value={editBoothValues.monitor_id}
+                                onChange={e => setEditBoothValues(p => ({ ...p, monitor_id: e.target.value }))}
+                                className="flex-1 border border-slate-300 rounded text-xs py-1 px-2 bg-white focus:outline-none focus:ring-1 focus:ring-red-500">
+                                {monitors.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                              </select>
+                              <input type="number" value={editBoothValues.booth_from}
+                                onChange={e => setEditBoothValues(p => ({ ...p, booth_from: e.target.value }))}
+                                className="w-16 border border-slate-300 rounded text-xs py-1 px-2 focus:outline-none focus:ring-1 focus:ring-red-500"
+                                placeholder="From" />
+                              <span className="text-xs text-gray-400">—</span>
+                              <input type="number" value={editBoothValues.booth_to}
+                                onChange={e => setEditBoothValues(p => ({ ...p, booth_to: e.target.value }))}
+                                className="w-16 border border-slate-300 rounded text-xs py-1 px-2 focus:outline-none focus:ring-1 focus:ring-red-500"
+                                placeholder="To" />
+                              <button onClick={() => handleSaveEditBooth(r.id)} className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700">Save</button>
+                              <button onClick={() => setEditingBoothId(null)} className="text-xs text-gray-500 hover:text-gray-700 px-1">✕</button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-sm font-mono font-bold text-gray-700 tabular-nums">
+                                Booths {r.booth_from} — {r.booth_to}
+                              </span>
+                              <span className="text-xs text-gray-400">({r.booth_to - r.booth_from + 1} booths)</span>
+                              <div className="ml-auto flex gap-1">
+                                <button onClick={() => { setEditingBoothId(r.id); setEditBoothValues({ monitor_id: r.monitor_id, booth_from: r.booth_from, booth_to: r.booth_to }) }}
+                                  className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                                <button onClick={() => handleDeleteBooth(r.id)} disabled={deletingBoothId === r.id}
+                                  className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 disabled:opacity-40">
+                                  {deletingBoothId === r.id ? '…' : 'Delete'}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+              {/* Unassigned monitors (no range yet) */}
+              {monitors.filter(m => !boothAssignments.some(a => a.monitor_id === m.id)).length > 0 && (
+                <div className="p-4">
+                  <p className="text-xs text-gray-400 font-medium mb-1">Monitors without booth ranges:</p>
+                  {monitors.filter(m => !boothAssignments.some(a => a.monitor_id === m.id)).map(m => (
+                    <span key={m.id} className="inline-block text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5 mr-1.5 mb-1">{m.full_name}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Legend */}
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 space-y-1">
+            <p className="font-semibold">How booth assignment works:</p>
+            <p>1. Add booth ranges to each monitor (e.g. Monitor A → Booths 1–50)</p>
+            <p>2. Click ⚡ Auto-assign Agents — agents are moved to the monitor covering their booth</p>
+            <p>3. When you edit an agent's booth number, they are automatically reassigned to the matching monitor</p>
+            <p>4. Agents with no matching range stay unchanged</p>
+          </div>
         </div>
       )}
 

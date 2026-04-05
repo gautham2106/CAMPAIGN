@@ -1,7 +1,11 @@
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 
+// Normalize phone: strip non-digits, prepend 91 if 10-digit Indian number
 function normalizePhone(phone) {
-  return phone ? phone.replace(/\D/g, '') : ''
+  if (!phone) return ''
+  let digits = phone.replace(/\D/g, '')
+  if (digits.length === 10) digits = '91' + digits
+  return digits
 }
 
 // Plain WA link — to check if agent has posted status
@@ -35,6 +39,12 @@ function waRemindLink(phone, agent, content) {
   return `https://wa.me/${digits}?text=${encodeURIComponent(lines)}`
 }
 
+// Returns true = valid https link, false = invalid/wrong format, null = not set
+function isValidLink(url) {
+  if (!url || !url.trim()) return null
+  return /^https?:\/\/.+\..+/.test(url.trim())
+}
+
 export default function AgentCard({ agent, logsByPlatform, onToggle, saving, content }) {
   const isCheckedForPlatform = (p) => logsByPlatform?.[p]?.is_checked === true
   const checkedCount = PLATFORMS.filter(isCheckedForPlatform).length
@@ -43,6 +53,9 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
 
   const checkUrl = hasPhone ? waCheckLink(agent.phone) : null
   const remindUrl = (hasPhone && content) ? waRemindLink(agent.phone, agent, content) : null
+
+  const fbValid = isValidLink(agent.fb_url)
+  const igValid = isValidLink(agent.ig_url)
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
@@ -104,18 +117,36 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
           )}
 
           {agent.fb_url && (
-            <a href={agent.fb_url} target="_blank" rel="noopener noreferrer"
-              className="flex flex-col items-center justify-center bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
+            <a href={fbValid ? agent.fb_url : undefined}
+              target="_blank" rel="noopener noreferrer"
+              title={fbValid ? 'Open Facebook profile' : 'Invalid link — not a proper URL'}
+              className={`relative flex flex-col items-center justify-center text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px] ${
+                fbValid ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-400 cursor-not-allowed'
+              }`}
+              onClick={fbValid ? undefined : e => e.preventDefault()}
             >
+              {fbValid === false && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-orange-400 rounded-full border border-white" title="Invalid URL" />
+              )}
               <span className="text-base leading-none">📘</span>
               <span>FB</span>
             </a>
           )}
 
           {agent.ig_url && (
-            <a href={agent.ig_url} target="_blank" rel="noopener noreferrer"
-              className="flex flex-col items-center justify-center bg-gradient-to-br from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
+            <a href={igValid ? agent.ig_url : undefined}
+              target="_blank" rel="noopener noreferrer"
+              title={igValid ? 'Open Instagram profile' : 'Invalid link — not a proper URL'}
+              className={`relative flex flex-col items-center justify-center text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px] ${
+                igValid
+                  ? 'bg-gradient-to-br from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500'
+                  : 'bg-gradient-to-br from-pink-300 to-orange-300 cursor-not-allowed'
+              }`}
+              onClick={igValid ? undefined : e => e.preventDefault()}
             >
+              {igValid === false && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-orange-400 rounded-full border border-white" title="Invalid URL" />
+              )}
               <span className="text-base leading-none">📸</span>
               <span>IG</span>
             </a>
@@ -131,8 +162,13 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
           )}
         </div>
 
-        {/* Button legend */}
-        {content && checkUrl && (
+        {/* Legend / invalid link warning */}
+        {(fbValid === false || igValid === false) && (
+          <p className="text-xs text-orange-600 -mt-1">
+            ● Invalid link detected — must start with https://
+          </p>
+        )}
+        {content && checkUrl && (fbValid !== false && igValid !== false) && (
           <p className="text-xs text-slate-400 -mt-1">
             💬 <span className="text-slate-500">Check</span> = view their WA status &nbsp;·&nbsp;
             🔔 <span className="text-red-500">Remind</span> = send Tamil reminder for <span className="font-medium text-slate-500">{content.title}</span>

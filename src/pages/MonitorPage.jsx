@@ -1,9 +1,15 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 import AgentCard from '../components/AgentCard'
 import MiniCalendar from '../components/MiniCalendar'
+
+// Validate that a URL starts with http(s)://
+function isValidLink(url) {
+  if (!url || !url.trim()) return null
+  return /^https?:\/\/.+\..+/.test(url.trim())
+}
 
 const TODAY = new Date().toISOString().split('T')[0]
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
@@ -37,6 +43,20 @@ export default function MonitorPage() {
   const [perfLoading, setPerfLoading] = useState(false)
   const [perfData, setPerfData] = useState(null) // { [agent_id]: { fullyPosted, total, rate } }
 
+  // Booth assignments for this monitor
+  const [boothAssignments, setBoothAssignments] = useState([])
+
+  // Add agent
+  const [showAddAgent, setShowAddAgent] = useState(false)
+  const [addForm, setAddForm] = useState({ name: '', booth_number: '', phone: '', fb_url: '', ig_url: '', gender: '' })
+  const [addingSave, setAddingSave] = useState(false)
+  const [addError, setAddError] = useState('')
+
+  // Edit agent
+  const [editingAgentId, setEditingAgentId] = useState(null)
+  const [editValues, setEditValues] = useState({})
+  const [savingEdit, setSavingEdit] = useState(false)
+
   // Load calendar dot dates once on mount
   useEffect(() => {
     if (!user) return
@@ -51,7 +71,7 @@ export default function MonitorPage() {
       })
   }, [user])
 
-  // Load agents once on mount
+  // Load agents + booth assignments once on mount
   useEffect(() => {
     if (!user) return
     supabase
@@ -62,6 +82,12 @@ export default function MonitorPage() {
       .then(({ data, error }) => {
         if (!error) setAgents(data ?? [])
       })
+    supabase
+      .from('monitor_booth_assignments')
+      .select('*')
+      .eq('monitor_id', user.id)
+      .order('booth_from')
+      .then(({ data }) => setBoothAssignments(data ?? []))
   }, [user])
 
   // Load content + compliance whenever date changes
@@ -189,6 +215,61 @@ export default function MonitorPage() {
     }
   }
 
+  // Build list of valid booth numbers from this monitor's assigned ranges
+  function getAssignedBooths() {
+    const booths = []
+    for (const a of boothAssignments) {
+      for (let b = a.booth_from; b <= a.booth_to; b++) booths.push(b)
+    }
+    return booths
+  }
+
+  async function handleAddAgent(e) {
+    e.preventDefault()
+    if (!addForm.name.trim()) return
+    const boothNum = addForm.booth_number !== '' ? parseInt(addForm.booth_number) : null
+    setAddingSave(true)
+    setAddError('')
+    const { error } = await supabase.from('digital_agents').insert({
+      name: addForm.name.trim(),
+      gender: addForm.gender || null,
+      booth_number: boothNum,
+      phone: addForm.phone.trim() || null,
+      fb_url: addForm.fb_url.trim() || null,
+      ig_url: addForm.ig_url.trim() || null,
+      assigned_monitor_id: user.id,
+      constituency_id: profile?.constituency_id ?? null,
+    })
+    if (error) { setAddError(error.message); setAddingSave(false); return }
+    setAddForm({ name: '', booth_number: '', phone: '', fb_url: '', ig_url: '', gender: '' })
+    setShowAddAgent(false)
+    setAddingSave(false)
+    loadDateData()
+  }
+
+  function startEditAgent(agent) {
+    setEditingAgentId(agent.id)
+    setEditValues({
+      name: agent.name ?? '',
+      phone: agent.phone ?? '',
+      fb_url: agent.fb_url ?? '',
+      ig_url: agent.ig_url ?? '',
+    })
+  }
+
+  async function saveEditAgent(agentId) {
+    setSavingEdit(true)
+    const { error } = await supabase.from('digital_agents').update({
+      name: editValues.name.trim(),
+      phone: editValues.phone.trim() || null,
+      fb_url: editValues.fb_url.trim() || null,
+      ig_url: editValues.ig_url.trim() || null,
+    }).eq('id', agentId)
+    if (error) setError(error.message)
+    else { setEditingAgentId(null); loadDateData() }
+    setSavingEdit(false)
+  }
+
   async function handleToggle(agentId, platform, currentChecked) {
     if (!selectedContentId) return
     setSaving(true)
@@ -256,11 +337,102 @@ export default function MonitorPage() {
     weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
   })
 
+  const assignedBooths = getAssignedBooths()
+
   return (
     <Layout title="My Agents">
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-4">
           {error}
+        </div>
+      )}
+
+      {/* ── ADD AGENT MODAL ── */}
+      {showAddAgent && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full sm:max-w-md overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-zinc-950">
+              <h2 className="text-base font-bold text-white">Add Agent</h2>
+              <button onClick={() => setShowAddAgent(false)} className="text-zinc-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form onSubmit={handleAddAgent} className="p-5 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Full Name *</label>
+                <input type="text" required value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  placeholder="Agent's full name" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Gender</label>
+                  <select value={addForm.gender} onChange={e => setAddForm(p => ({ ...p, gender: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+                    <option value="">Select…</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                    Booth #{assignedBooths.length > 0 ? `(your range${boothAssignments.length > 1 ? 's' : ''}: ${boothAssignments.map(a => `${a.booth_from}–${a.booth_to}`).join(', ')})` : ''}
+                  </label>
+                  {assignedBooths.length > 0 && assignedBooths.length <= 100 ? (
+                    <select value={addForm.booth_number} onChange={e => setAddForm(p => ({ ...p, booth_number: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+                      <option value="">Select booth…</option>
+                      {assignedBooths.map(b => <option key={b} value={b}>Booth {b}</option>)}
+                    </select>
+                  ) : (
+                    <input type="number" value={addForm.booth_number} onChange={e => setAddForm(p => ({ ...p, booth_number: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                      placeholder="e.g. 42"
+                      min={boothAssignments[0]?.booth_from}
+                      max={boothAssignments[boothAssignments.length - 1]?.booth_to} />
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">WhatsApp / Phone</label>
+                <input type="tel" value={addForm.phone} onChange={e => setAddForm(p => ({ ...p, phone: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  placeholder="10-digit number (country code auto-added)" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                  Facebook URL
+                  {addForm.fb_url && isValidLink(addForm.fb_url) === false && (
+                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                  )}
+                </label>
+                <input type="text" value={addForm.fb_url} onChange={e => setAddForm(p => ({ ...p, fb_url: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                    addForm.fb_url && isValidLink(addForm.fb_url) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                  }`}
+                  placeholder="https://facebook.com/profilename" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                  Instagram URL
+                  {addForm.ig_url && isValidLink(addForm.ig_url) === false && (
+                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                  )}
+                </label>
+                <input type="text" value={addForm.ig_url} onChange={e => setAddForm(p => ({ ...p, ig_url: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                    addForm.ig_url && isValidLink(addForm.ig_url) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                  }`}
+                  placeholder="https://instagram.com/username" />
+              </div>
+              {addError && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{addError}</div>}
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setShowAddAgent(false)} className="flex-1 border border-slate-300 text-slate-700 py-2 rounded-lg text-sm hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={addingSave} className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold py-2 rounded-lg text-sm">
+                  {addingSave ? 'Adding…' : 'Add Agent'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -329,8 +501,8 @@ export default function MonitorPage() {
             </div>
           )}
 
-          {/* Stats bar */}
-          <div className="flex items-center gap-3 mb-3 text-xs">
+          {/* Stats bar + Add Agent */}
+          <div className="flex items-center gap-3 mb-3 text-xs flex-wrap">
             <span className="text-gray-500">{agents.length} agents total</span>
             <span className="w-px h-3 bg-gray-200" />
             <span className="text-orange-600 font-medium">{todoAgents.length} to do</span>
@@ -342,6 +514,12 @@ export default function MonitorPage() {
                 <span className="text-gray-500">{Math.round(doneAgents.length / agents.length * 100)}%</span>
               </>
             )}
+            <button
+              onClick={() => setShowAddAgent(true)}
+              className="ml-auto bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
+            >
+              + Add Agent
+            </button>
           </div>
 
           {/* Tabs: To Do | Done | Performance */}
@@ -392,14 +570,76 @@ export default function MonitorPage() {
             return (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {list.map(agent => (
-                  <AgentCard
-                    key={agent.id}
-                    agent={agent}
-                    logsByPlatform={getAgentLogs(agent.id)}
-                    onToggle={(agentId, platform, checked) => handleToggle(agentId, platform, checked)}
-                    saving={saving}
-                    content={selectedContent}
-                  />
+                  <div key={agent.id}>
+                    {editingAgentId === agent.id ? (
+                      <div className="bg-white rounded-xl border border-red-200 shadow-sm p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold text-gray-800">Edit Agent</p>
+                          <button onClick={() => setEditingAgentId(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Name *</label>
+                          <input type="text" value={editValues.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
+                          <input type="tel" value={editValues.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                            placeholder="10-digit number" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">
+                            Facebook URL
+                            {editValues.fb_url && isValidLink(editValues.fb_url) === false && (
+                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                            )}
+                          </label>
+                          <input type="text" value={editValues.fb_url} onChange={e => setEditValues(p => ({ ...p, fb_url: e.target.value }))}
+                            className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                              editValues.fb_url && isValidLink(editValues.fb_url) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                            }`}
+                            placeholder="https://facebook.com/…" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">
+                            Instagram URL
+                            {editValues.ig_url && isValidLink(editValues.ig_url) === false && (
+                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                            )}
+                          </label>
+                          <input type="text" value={editValues.ig_url} onChange={e => setEditValues(p => ({ ...p, ig_url: e.target.value }))}
+                            className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                              editValues.ig_url && isValidLink(editValues.ig_url) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                            }`}
+                            placeholder="https://instagram.com/…" />
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => setEditingAgentId(null)} className="flex-1 border border-slate-300 text-slate-700 text-sm py-2 rounded-lg hover:bg-slate-50">Cancel</button>
+                          <button onClick={() => saveEditAgent(agent.id)} disabled={savingEdit}
+                            className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold text-sm py-2 rounded-lg">
+                            {savingEdit ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative group">
+                        <AgentCard
+                          agent={agent}
+                          logsByPlatform={getAgentLogs(agent.id)}
+                          onToggle={(agentId, platform, checked) => handleToggle(agentId, platform, checked)}
+                          saving={saving}
+                          content={selectedContent}
+                        />
+                        <button
+                          onClick={() => startEditAgent(agent)}
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 px-2 py-0.5 rounded-lg shadow-sm"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )

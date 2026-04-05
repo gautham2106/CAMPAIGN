@@ -246,6 +246,49 @@ CREATE POLICY "Monitor updates own logs"
 -- );
 
 -- ============================================================
+-- MONITOR BOOTH ASSIGNMENTS
+-- Maps monitors to their permanent booth number ranges.
+-- Used for auto-assigning agents based on their booth number.
+-- Migration (if table doesn't exist yet):
+--   Run the CREATE TABLE below in Supabase SQL Editor.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS monitor_booth_assignments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  monitor_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  constituency_id UUID REFERENCES constituencies(id) ON DELETE CASCADE,
+  booth_from INT NOT NULL,
+  booth_to INT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE monitor_booth_assignments ENABLE ROW LEVEL SECURITY;
+
+-- Constituency admins can manage assignments for their constituency
+CREATE POLICY IF NOT EXISTS "Const admins manage booth assignments"
+  ON monitor_booth_assignments FOR ALL
+  USING (
+    constituency_id IN (
+      SELECT constituency_id FROM profiles WHERE id = auth.uid()
+      AND role IN ('constituency_admin', 'super_admin')
+    )
+  );
+
+-- Monitors can read their own assignments
+CREATE POLICY IF NOT EXISTS "Monitors read own booth assignments"
+  ON monitor_booth_assignments FOR SELECT
+  USING (monitor_id = auth.uid());
+
+-- Super admins full access
+CREATE POLICY IF NOT EXISTS "Super admins full booth assignments"
+  ON monitor_booth_assignments FOR ALL
+  USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'super_admin')
+  );
+
+CREATE INDEX IF NOT EXISTS idx_booth_assignments_monitor ON monitor_booth_assignments(monitor_id);
+CREATE INDEX IF NOT EXISTS idx_booth_assignments_constituency ON monitor_booth_assignments(constituency_id);
+
+-- ============================================================
 -- INDEXES for performance
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_digital_agents_constituency ON digital_agents(constituency_id);
