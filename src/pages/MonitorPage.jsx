@@ -718,7 +718,7 @@ export default function MonitorPage() {
                               {(() => {
                                 const n = parseInt(editValues.booth_number)
                                 if (!editValues.booth_number || isNaN(n)) return null
-                                const match = findMonitorForBooth(n)
+                                const match = boothAssignments.find(a => n >= a.booth_from && n <= a.booth_to)
                                 if (match && match.monitor_id !== user.id) return <span className="ml-1 text-orange-500 font-normal normal-case">→ reassign</span>
                                 return null
                               })()}
