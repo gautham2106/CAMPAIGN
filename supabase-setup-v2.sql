@@ -38,8 +38,24 @@ CREATE TABLE IF NOT EXISTS digital_agents (
   constituency_id UUID REFERENCES constituencies(id),
   assigned_monitor_id UUID REFERENCES profiles(id),
   submitted_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Audit columns (migration: run ALTER TABLE block below if table already exists)
+  created_by UUID REFERENCES profiles(id),
+  updated_by UUID REFERENCES profiles(id),
+  updated_at TIMESTAMPTZ,
+  reassigned_from UUID REFERENCES profiles(id),
+  reassigned_at TIMESTAMPTZ
 );
+
+-- ============================================================
+-- MIGRATION: Run this if digital_agents table already exists
+-- ============================================================
+-- ALTER TABLE digital_agents
+--   ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES profiles(id),
+--   ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES profiles(id),
+--   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
+--   ADD COLUMN IF NOT EXISTS reassigned_from UUID REFERENCES profiles(id),
+--   ADD COLUMN IF NOT EXISTS reassigned_at TIMESTAMPTZ;
 
 -- 4. DAILY CONTENT
 CREATE TABLE IF NOT EXISTS daily_content (

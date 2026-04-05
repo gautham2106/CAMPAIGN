@@ -58,6 +58,8 @@ export default function MonitorPage() {
   const [savingEdit, setSavingEdit] = useState(false)
   // Reassignment confirmation: { agentId, newBooth, newMonitorId, newMonitorName }
   const [boothConfirm, setBoothConfirm] = useState(null)
+  // Names for reassigned_from monitor IDs
+  const [monitorNames, setMonitorNames] = useState({})
 
   // Load calendar dot dates once on mount
   useEffect(() => {
@@ -129,6 +131,16 @@ export default function MonitorPage() {
         .order('booth_number')
 
       setAgents(myAgents ?? [])
+
+      // Load names for any reassigned_from monitor IDs
+      const reassignedIds = [...new Set((myAgents ?? []).map(a => a.reassigned_from).filter(Boolean))]
+      if (reassignedIds.length) {
+        const { data: monProfiles } = await supabase
+          .from('profiles').select('id, full_name').in('id', reassignedIds)
+        const nameMap = {}
+        for (const p of monProfiles ?? []) nameMap[p.id] = p.full_name
+        setMonitorNames(nameMap)
+      }
 
       if (dateContents?.length && myAgents?.length) {
         const { data: logs, error: le } = await supabase
@@ -241,6 +253,7 @@ export default function MonitorPage() {
       ig_url: addForm.ig_url.trim() || null,
       assigned_monitor_id: user.id,
       constituency_id: profile?.constituency_id ?? null,
+      created_by: user.id,
     })
     if (error) { setAddError(error.message); setAddingSave(false); return }
     setAddForm({ name: '', booth_number: '', phone: '', fb_url: '', ig_url: '', gender: '' })
@@ -301,8 +314,14 @@ export default function MonitorPage() {
       phone: editValues.phone.trim() || null,
       fb_url: editValues.fb_url.trim() || null,
       ig_url: editValues.ig_url.trim() || null,
+      updated_by: user.id,
+      updated_at: new Date().toISOString(),
     }
-    if (newMonitorId) updateData.assigned_monitor_id = newMonitorId
+    if (newMonitorId) {
+      updateData.assigned_monitor_id = newMonitorId
+      updateData.reassigned_from = user.id
+      updateData.reassigned_at = new Date().toISOString()
+    }
     const { error } = await supabase.from('digital_agents').update(updateData).eq('id', agentId)
     if (error) setError(error.message)
     else { setEditingAgentId(null); loadDateData() }
@@ -504,6 +523,20 @@ export default function MonitorPage() {
                 OK, Reassign
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BOOTH RANGES BANNER ── */}
+      {boothAssignments.length > 0 && (
+        <div className="bg-zinc-900 text-white rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2 text-sm">
+          <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wide shrink-0">Your Booths</span>
+          <div className="flex flex-wrap gap-1.5">
+            {boothAssignments.map(a => (
+              <span key={a.id} className="bg-red-600 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+                {a.booth_from}–{a.booth_to}
+              </span>
+            ))}
           </div>
         </div>
       )}
@@ -713,7 +746,7 @@ export default function MonitorPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="relative group">
+                      <div className="relative">
                         <AgentCard
                           agent={agent}
                           logsByPlatform={getAgentLogs(agent.id)}
@@ -721,12 +754,21 @@ export default function MonitorPage() {
                           saving={saving}
                           content={selectedContent}
                         />
+                        {/* Always-visible edit button */}
                         <button
                           onClick={() => startEditAgent(agent)}
-                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 px-2 py-0.5 rounded-lg shadow-sm"
+                          className="absolute top-2 right-2 text-xs bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 px-2 py-0.5 rounded-lg shadow-sm"
                         >
-                          Edit
+                          ✏️ Edit
                         </button>
+                        {/* Reassignment notification */}
+                        {agent.reassigned_from && (
+                          <div className="absolute bottom-2 left-2 right-2">
+                            <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-medium">
+                              ↩ Reassigned from {monitorNames[agent.reassigned_from] ?? 'another monitor'}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

@@ -90,7 +90,12 @@ const TODAY = new Date().toISOString().split('T')[0]
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 const P_LABEL = { whatsapp: 'WhatsApp', facebook: 'Facebook', instagram: 'Instagram' }
 const P_SHORT = { whatsapp: 'WA', facebook: 'FB', instagram: 'IG' }
-const TABS = ['Dashboard', 'Admins', 'Content', 'Constituencies']
+const TABS = ['Dashboard', 'Admins', 'Content', 'Constituencies', 'Field Ops']
+
+function isValidLink(url) {
+  if (!url || !url.trim()) return null
+  return /^https?:\/\/.+\..+/.test(url.trim())
+}
 
 function pct(num, den) {
   if (!den) return 0
@@ -203,6 +208,14 @@ export default function SuperAdminPage() {
   const [addingConst, setAddingConst] = useState(false)
   const [error, setError] = useState('')
 
+  // Field Ops tab
+  const [expandedConstId, setExpandedConstId] = useState(null)
+
+  // Constituency rename/delete
+  const [editingConstId, setEditingConstId] = useState(null)
+  const [editConstName, setEditConstName] = useState('')
+  const [deletingConstId, setDeletingConstId] = useState(null)
+
   // Content inline edit
   const [editingContentId, setEditingContentId] = useState(null)
   const [editContentValues, setEditContentValues] = useState({})
@@ -217,7 +230,7 @@ export default function SuperAdminPage() {
     try {
       const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes] = await Promise.all([
         supabase.from('constituencies').select('*').order('name'),
-        supabase.from('digital_agents').select('id, constituency_id, assigned_monitor_id'),
+        supabase.from('digital_agents').select('*'),
         supabase.from('profiles').select('id, full_name, email, constituency_id').eq('role', 'monitor'),
         supabase.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin'),
         supabase.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
@@ -312,6 +325,27 @@ export default function SuperAdminPage() {
     if (error) setError(error.message)
     else { setNewConstName(''); loadBase() }
     setAddingConst(false)
+  }
+
+  async function handleRenameConst(id, name) {
+    if (!name.trim()) return
+    const { error } = await supabase.from('constituencies').update({ name: name.trim() }).eq('id', id)
+    if (error) setError(error.message)
+    else { setEditingConstId(null); loadBase() }
+  }
+
+  async function handleDeleteConst(id) {
+    const agentCount = allAgents.filter(a => a.constituency_id === id).length
+    const monCount = allMonitors.filter(m => m.constituency_id === id).length
+    const msg = agentCount || monCount
+      ? `This constituency has ${monCount} monitor(s) and ${agentCount} agent(s). Deleting it will orphan all their data. Are you sure?`
+      : 'Delete this constituency?'
+    if (!window.confirm(msg)) return
+    setDeletingConstId(id)
+    const { error } = await supabase.from('constituencies').delete().eq('id', id)
+    if (error) setError(error.message)
+    else loadBase()
+    setDeletingConstId(null)
   }
 
   function startEditContent(c) {
@@ -710,17 +744,141 @@ export default function SuperAdminPage() {
                 const monCount = allMonitors.filter(m => m.constituency_id === c.id).length
                 const adminNames = constAdmins.filter(a => a.constituency_id === c.id).map(a => a.full_name)
                 return (
-                  <div key={c.id} className="px-5 py-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-gray-800 text-sm">{c.name}</span>
-                      {adminNames.length > 0 && <p className="text-xs text-gray-400">Admin{adminNames.length > 1 ? 's' : ''}: {adminNames.join(', ')}</p>}
-                    </div>
-                    <p className="text-xs text-gray-400">{cAgentIds.length} agents · {monCount} monitors</p>
+                  <div key={c.id} className="px-4 py-3 flex items-center gap-2">
+                    {editingConstId === c.id ? (
+                      <>
+                        <input autoFocus value={editConstName}
+                          onChange={e => setEditConstName(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleRenameConst(c.id, editConstName)}
+                          className="flex-1 px-3 py-1.5 border border-red-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                        <button onClick={() => handleRenameConst(c.id, editConstName)}
+                          className="text-xs bg-red-600 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-red-700">Save</button>
+                        <button onClick={() => setEditingConstId(null)}
+                          className="text-xs text-gray-400 hover:text-gray-700 px-2 py-1.5 rounded-lg">Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex-1">
+                          <span className="font-medium text-gray-800 text-sm">{c.name}</span>
+                          {adminNames.length > 0 && <p className="text-xs text-gray-400">Admin{adminNames.length > 1 ? 's' : ''}: {adminNames.join(', ')}</p>}
+                        </div>
+                        <p className="text-xs text-gray-400 shrink-0">{cAgentIds.length} agents · {monCount} monitors</p>
+                        <button onClick={() => { setEditingConstId(c.id); setEditConstName(c.name) }}
+                          className="text-gray-400 hover:text-gray-700 text-sm px-1.5 py-1 rounded hover:bg-gray-100" title="Rename">✏️</button>
+                        <button onClick={() => handleDeleteConst(c.id)} disabled={deletingConstId === c.id}
+                          className="text-red-400 hover:text-red-600 text-sm px-1.5 py-1 rounded hover:bg-red-50 disabled:opacity-40" title="Delete">
+                          {deletingConstId === c.id ? '…' : '✕'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )
               })
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── FIELD OPS TAB ── */}
+      {activeTab === 'Field Ops' && (
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">Drill into any constituency to see monitors and their agents. Orange = invalid FB/IG links.</p>
+          {constituencies.map(c => {
+            const cMonitors = allMonitors.filter(m => m.constituency_id === c.id)
+            const cAgents = allAgents.filter(a => a.constituency_id === c.id)
+            const invalidCount = cAgents.filter(a =>
+              isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false ||
+              !a.fb_url || !a.ig_url
+            ).length
+            const isOpen = expandedConstId === c.id
+            return (
+              <div key={c.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <button
+                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                  onClick={() => setExpandedConstId(isOpen ? null : c.id)}
+                >
+                  <span className="font-semibold text-gray-800">{c.name}</span>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    {invalidCount > 0 && (
+                      <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">
+                        ⚠ {invalidCount} link issues
+                      </span>
+                    )}
+                    <span>{cMonitors.length} monitors · {cAgents.length} agents</span>
+                    <span className="text-gray-400">{isOpen ? '▲' : '▼'}</span>
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="border-t border-gray-100">
+                    {cMonitors.length === 0 ? (
+                      <p className="px-4 py-3 text-xs text-gray-400">No monitors in this constituency.</p>
+                    ) : (
+                      cMonitors.map(m => {
+                        const mAgents = cAgents.filter(a => a.assigned_monitor_id === m.id)
+                        const mInvalid = mAgents.filter(a =>
+                          isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false ||
+                          !a.fb_url || !a.ig_url
+                        ).length
+                        return (
+                          <div key={m.id} className="border-b border-gray-50 last:border-0">
+                            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50">
+                              <p className="text-sm font-semibold text-gray-700">{m.full_name}</p>
+                              <div className="flex items-center gap-2 text-xs text-gray-400">
+                                {mInvalid > 0 && <span className="text-orange-600 font-semibold">⚠ {mInvalid}</span>}
+                                <span>{mAgents.length} agents</span>
+                              </div>
+                            </div>
+                            {mAgents.length > 0 && (
+                              <div className="px-4 py-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                {mAgents.map(a => {
+                                  const fbBad = isValidLink(a.fb_url) === false || !a.fb_url
+                                  const igBad = isValidLink(a.ig_url) === false || !a.ig_url
+                                  return (
+                                    <div key={a.id} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 ${(fbBad || igBad) ? 'bg-orange-50' : 'bg-white'}`}>
+                                      {a.booth_number != null && (
+                                        <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>
+                                      )}
+                                      <span className="text-gray-700 truncate flex-1">{a.name}</span>
+                                      {!a.fb_url
+                                        ? <span className="text-gray-300 shrink-0">FB–</span>
+                                        : isValidLink(a.fb_url) === false
+                                        ? <span className="text-orange-500 shrink-0" title={a.fb_url}>⚠FB</span>
+                                        : <span className="text-blue-500 shrink-0">FB✓</span>
+                                      }
+                                      {!a.ig_url
+                                        ? <span className="text-gray-300 shrink-0">IG–</span>
+                                        : isValidLink(a.ig_url) === false
+                                        ? <span className="text-pink-500 shrink-0" title={a.ig_url}>⚠IG</span>
+                                        : <span className="text-pink-500 shrink-0">IG✓</span>
+                                      }
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
+                    {/* Unassigned agents */}
+                    {cAgents.filter(a => !a.assigned_monitor_id).length > 0 && (
+                      <div className="border-t border-gray-100 px-4 py-2">
+                        <p className="text-xs text-gray-400 font-semibold mb-1">Unassigned ({cAgents.filter(a => !a.assigned_monitor_id).length})</p>
+                        <div className="flex flex-wrap gap-1">
+                          {cAgents.filter(a => !a.assigned_monitor_id).map(a => (
+                            <span key={a.id} className="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">
+                              {a.booth_number != null ? `#${a.booth_number} ` : ''}{a.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </Layout>

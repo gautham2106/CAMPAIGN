@@ -8,7 +8,12 @@ import CreateMonitorModal from '../components/CreateMonitorModal'
 import BulkMonitorImport from '../components/BulkMonitorImport'
 import MiniCalendar from '../components/MiniCalendar'
 
-function AddAgentModal({ constituencyId, onAdded, onClose }) {
+function isValidLink(url) {
+  if (!url || !url.trim()) return null
+  return /^https?:\/\/.+\..+/.test(url.trim())
+}
+
+function AddAgentModal({ constituencyId, userId, onAdded, onClose }) {
   const [name, setName] = useState('')
   const [gender, setGender] = useState('')
   const [booth, setBooth] = useState('')
@@ -30,6 +35,7 @@ function AddAgentModal({ constituencyId, onAdded, onClose }) {
       fb_url: fbUrl.trim() || null,
       ig_url: igUrl.trim() || null,
       constituency_id: constituencyId,
+      created_by: userId ?? null,
     })
     if (error) { setError(error.message); setSaving(false) }
     else { onAdded?.(); onClose?.() }
@@ -175,6 +181,7 @@ export default function ConstituencyAdminPage() {
 
   // Agents tab: search + filter + bulk + inline edit
   const [agentSearch, setAgentSearch] = useState('')
+  const [filterInvalidLinks, setFilterInvalidLinks] = useState(false)
   const [filterMonitorId, setFilterMonitorId] = useState('')
   const [boothFrom, setBoothFrom] = useState('')
   const [boothTo, setBoothTo] = useState('')
@@ -403,11 +410,20 @@ export default function ConstituencyAdminPage() {
     setConfirmAction(null)
     setBulkReassigning(true)
     const newMonitorId = reassignTargetId === 'unassigned' ? null : reassignTargetId
-    const { error } = await supabase.from('digital_agents')
-      .update({ assigned_monitor_id: newMonitorId })
-      .in('id', [...selectedAgentIds])
-    if (error) setError(error.message)
-    else { setSelectedAgentIds(new Set()); setReassignTargetId(''); loadBase() }
+    const now = new Date().toISOString()
+    let hasError = false
+    for (const agentId of [...selectedAgentIds]) {
+      const agent = agents.find(a => a.id === agentId)
+      const { error } = await supabase.from('digital_agents').update({
+        assigned_monitor_id: newMonitorId,
+        reassigned_from: agent?.assigned_monitor_id ?? null,
+        reassigned_at: now,
+        updated_by: profile?.id ?? null,
+        updated_at: now,
+      }).eq('id', agentId)
+      if (error) { setError(error.message); hasError = true; break }
+    }
+    if (!hasError) { setSelectedAgentIds(new Set()); setReassignTargetId(''); loadBase() }
     setBulkReassigning(false)
   }
 
@@ -464,11 +480,18 @@ export default function ConstituencyAdminPage() {
       booth_number: newBooth,
       fb_url: editAgentValues.fb_url.trim() || null,
       ig_url: editAgentValues.ig_url.trim() || null,
+      updated_by: profile?.id ?? null,
+      updated_at: new Date().toISOString(),
     }
     // Auto-reassign to correct monitor based on booth range
     if (newBooth != null) {
       const assignedMonitor = findMonitorForBooth(newBooth)
-      if (assignedMonitor !== null) updateData.assigned_monitor_id = assignedMonitor
+      if (assignedMonitor !== null) {
+        const agent = agents.find(a => a.id === agentId)
+        updateData.assigned_monitor_id = assignedMonitor
+        updateData.reassigned_from = agent?.assigned_monitor_id ?? null
+        updateData.reassigned_at = new Date().toISOString()
+      }
     }
     const { error } = await supabase.from('digital_agents').update(updateData).eq('id', agentId)
     if (error) setError(error.message)
@@ -587,6 +610,11 @@ export default function ConstituencyAdminPage() {
       const to   = boothTo   !== '' ? parseInt(boothTo)   : Infinity
       if (isNaN(b) || b < from || b > to) return false
     }
+    if (filterInvalidLinks) {
+      const fbBad = !a.fb_url || isValidLink(a.fb_url) === false
+      const igBad = !a.ig_url || isValidLink(a.ig_url) === false
+      if (!fbBad && !igBad) return false
+    }
     if (!agentSearch.trim()) return true
     const q = agentSearch.toLowerCase()
     return (
@@ -633,6 +661,7 @@ export default function ConstituencyAdminPage() {
       {showAddAgent && (
         <AddAgentModal
           constituencyId={constituencyId}
+          userId={profile?.id}
           onAdded={loadBase}
           onClose={() => setShowAddAgent(false)}
         />
@@ -980,6 +1009,24 @@ export default function ConstituencyAdminPage() {
                 ⚠ Unassigned · {unassigned.length}
               </button>
             )}
+            {/* Invalid links chip */}
+            {(() => {
+              const invalidCount = agents.filter(a =>
+                !a.fb_url || !a.ig_url || isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false
+              ).length
+              return invalidCount > 0 ? (
+                <button
+                  onClick={() => { setFilterInvalidLinks(v => !v); setSelectedAgentIds(new Set()) }}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                    filterInvalidLinks
+                      ? 'bg-orange-500 text-white border-orange-500'
+                      : 'bg-orange-50 text-orange-600 border-orange-200 hover:border-orange-400'
+                  }`}
+                >
+                  ⚠ Link Issues · {invalidCount}
+                </button>
+              ) : null
+            })()}
             {/* Per monitor */}
             {monitors.map(m => {
               const count = agents.filter(a => a.assigned_monitor_id === m.id).length
@@ -1233,18 +1280,39 @@ export default function ConstituencyAdminPage() {
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
-                    <p className="text-xs text-gray-400">
-                      {a.phone || ''}
-                      {a.phone && !filterMonitorId ? ' · ' : ''}
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      {a.phone && <span className="text-xs text-gray-400">{a.phone}</span>}
                       {!filterMonitorId && (mon
-                        ? <span className="text-slate-500">{mon.full_name}</span>
-                        : <span className="text-orange-500">Unassigned</span>
+                        ? <span className="text-xs text-slate-500">{mon.full_name}</span>
+                        : <span className="text-xs text-orange-500">Unassigned</span>
                       )}
-                    </p>
+                      {a.created_by && monitors.find(m => m.id === a.created_by) && (
+                        <span className="text-xs text-indigo-400">by {monitors.find(m => m.id === a.created_by)?.full_name}</span>
+                      )}
+                      {a.reassigned_from && (
+                        <span className="text-xs text-amber-600 font-medium">
+                          ↩ from {monitors.find(m => m.id === a.reassigned_from)?.full_name ?? 'prev. monitor'}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {a.fb_url && <a href={a.fb_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-600 text-xs px-1">FB</a>}
-                    {a.ig_url && <a href={a.ig_url} target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-600 text-xs px-1">IG</a>}
+                    {a.fb_url
+                      ? <a href={isValidLink(a.fb_url) ? a.fb_url : undefined} target="_blank" rel="noopener noreferrer"
+                          className={`text-xs px-1 ${isValidLink(a.fb_url) ? 'text-blue-400 hover:text-blue-600' : 'text-orange-400'}`}
+                          title={isValidLink(a.fb_url) ? undefined : 'Invalid URL'}>
+                          {isValidLink(a.fb_url) ? 'FB' : '⚠FB'}
+                        </a>
+                      : <span className="text-xs text-gray-200">FB–</span>
+                    }
+                    {a.ig_url
+                      ? <a href={isValidLink(a.ig_url) ? a.ig_url : undefined} target="_blank" rel="noopener noreferrer"
+                          className={`text-xs px-1 ${isValidLink(a.ig_url) ? 'text-pink-400 hover:text-pink-600' : 'text-orange-400'}`}
+                          title={isValidLink(a.ig_url) ? undefined : 'Invalid URL'}>
+                          {isValidLink(a.ig_url) ? 'IG' : '⚠IG'}
+                        </a>
+                      : <span className="text-xs text-gray-200">IG–</span>
+                    }
                     <button onClick={() => startEditAgent(a)}
                       className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100 transition-colors"
                       title="Edit">✏️</button>
