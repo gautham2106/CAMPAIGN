@@ -182,8 +182,9 @@ CREATE POLICY "Monitor updates own assigned agents"
   )
   WITH CHECK (
     get_my_role() = 'monitor'
-    AND assigned_monitor_id = auth.uid()
   );
+-- USING: monitor can only update agents currently assigned to them.
+-- WITH CHECK: only role check — allows changing assigned_monitor_id for booth reassignment.
 -- NOTE: No DELETE policy for monitors — they cannot delete agents.
 -- Only constituency admins (FOR ALL policy above) and super admins can delete.
 

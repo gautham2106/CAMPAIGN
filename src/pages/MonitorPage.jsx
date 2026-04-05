@@ -56,6 +56,8 @@ export default function MonitorPage() {
   const [editingAgentId, setEditingAgentId] = useState(null)
   const [editValues, setEditValues] = useState({})
   const [savingEdit, setSavingEdit] = useState(false)
+  // Reassignment confirmation: { agentId, newBooth, newMonitorId, newMonitorName }
+  const [boothConfirm, setBoothConfirm] = useState(null)
 
   // Load calendar dot dates once on mount
   useEffect(() => {
@@ -251,20 +253,57 @@ export default function MonitorPage() {
     setEditingAgentId(agent.id)
     setEditValues({
       name: agent.name ?? '',
+      booth_number: agent.booth_number != null ? String(agent.booth_number) : '',
       phone: agent.phone ?? '',
       fb_url: agent.fb_url ?? '',
       ig_url: agent.ig_url ?? '',
     })
   }
 
-  async function saveEditAgent(agentId) {
+  // Find which monitor owns a booth number based on loaded assignments
+  function findMonitorForBooth(boothNum) {
+    const n = parseInt(boothNum)
+    if (isNaN(n)) return null
+    const match = boothAssignments.find(a => n >= a.booth_from && n <= a.booth_to)
+    return match ? { monitor_id: match.monitor_id } : null
+  }
+
+  async function handleSaveEdit(agentId) {
+    const newBooth = editValues.booth_number !== '' ? parseInt(editValues.booth_number) : null
+    const agent = agents.find(a => a.id === agentId)
+    const boothChanged = newBooth !== null && newBooth !== agent?.booth_number
+
+    // If booth changed, check if it belongs to a different monitor
+    if (boothChanged) {
+      const match = findMonitorForBooth(newBooth)
+      if (match && match.monitor_id !== user.id) {
+        // Need to fetch monitor name for the confirmation message
+        const { data: mon } = await supabase
+          .from('profiles').select('full_name').eq('id', match.monitor_id).single()
+        setBoothConfirm({
+          agentId,
+          newBooth,
+          newMonitorId: match.monitor_id,
+          newMonitorName: mon?.full_name ?? 'another monitor',
+        })
+        return
+      }
+    }
+    await doSaveEdit(agentId, newBooth, null)
+  }
+
+  async function doSaveEdit(agentId, newBooth, newMonitorId) {
     setSavingEdit(true)
-    const { error } = await supabase.from('digital_agents').update({
+    setBoothConfirm(null)
+    const updateData = {
       name: editValues.name.trim(),
+      booth_number: newBooth,
       phone: editValues.phone.trim() || null,
       fb_url: editValues.fb_url.trim() || null,
       ig_url: editValues.ig_url.trim() || null,
-    }).eq('id', agentId)
+    }
+    if (newMonitorId) updateData.assigned_monitor_id = newMonitorId
+    const { error } = await supabase.from('digital_agents').update(updateData).eq('id', agentId)
     if (error) setError(error.message)
     else { setEditingAgentId(null); loadDateData() }
     setSavingEdit(false)
@@ -436,6 +475,39 @@ export default function MonitorPage() {
         </div>
       )}
 
+      {/* ── BOOTH REASSIGN CONFIRMATION ── */}
+      {boothConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div className="text-center">
+              <div className="text-3xl mb-2">🔄</div>
+              <p className="font-bold text-gray-900">Reassign Agent?</p>
+              <p className="text-sm text-gray-600 mt-2">
+                Booth <span className="font-bold text-gray-900">#{boothConfirm.newBooth}</span> belongs to{' '}
+                <span className="font-bold text-gray-900">{boothConfirm.newMonitorName}</span>.
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                This agent will be moved to their monitor after saving.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setBoothConfirm(null)}
+                className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-xl text-sm font-medium hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => doSaveEdit(boothConfirm.agentId, boothConfirm.newBooth, boothConfirm.newMonitorId)}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-xl text-sm font-semibold"
+              >
+                OK, Reassign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── DATE SELECTOR ── */}
       <div className="mb-4">
         <button
@@ -577,16 +649,34 @@ export default function MonitorPage() {
                           <p className="text-sm font-semibold text-gray-800">Edit Agent</p>
                           <button onClick={() => setEditingAgentId(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
                         </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Name *</label>
-                          <input type="text" value={editValues.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))}
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
-                          <input type="tel" value={editValues.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))}
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                            placeholder="10-digit number" />
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="col-span-2">
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">Name *</label>
+                            <input type="text" value={editValues.name} onChange={e => setEditValues(p => ({ ...p, name: e.target.value }))}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                              Booth #
+                              {(() => {
+                                const n = parseInt(editValues.booth_number)
+                                if (!editValues.booth_number || isNaN(n)) return null
+                                const match = findMonitorForBooth(n)
+                                if (match && match.monitor_id !== user.id) return <span className="ml-1 text-orange-500 font-normal normal-case">→ reassign</span>
+                                return null
+                              })()}
+                            </label>
+                            <input type="number" min={1} value={editValues.booth_number}
+                              onChange={e => setEditValues(p => ({ ...p, booth_number: e.target.value }))}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                              placeholder="e.g. 42" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
+                            <input type="tel" value={editValues.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                              placeholder="10-digit number" />
+                          </div>
                         </div>
                         <div>
                           <label className="block text-xs font-semibold text-slate-500 mb-1">
@@ -616,7 +706,7 @@ export default function MonitorPage() {
                         </div>
                         <div className="flex gap-2">
                           <button onClick={() => setEditingAgentId(null)} className="flex-1 border border-slate-300 text-slate-700 text-sm py-2 rounded-lg hover:bg-slate-50">Cancel</button>
-                          <button onClick={() => saveEditAgent(agent.id)} disabled={savingEdit}
+                          <button onClick={() => handleSaveEdit(agent.id)} disabled={savingEdit}
                             className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold text-sm py-2 rounded-lg">
                             {savingEdit ? 'Saving…' : 'Save'}
                           </button>
