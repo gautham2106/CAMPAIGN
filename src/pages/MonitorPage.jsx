@@ -501,31 +501,31 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── BOOTH REASSIGN CONFIRMATION ── */}
+      {/* ── BOOTH REASSIGN CONFIRMATION TOAST ── */}
       {boothConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
-            <div className="text-center">
-              <div className="text-3xl mb-2">🔄</div>
-              <p className="font-bold text-gray-900">Reassign Agent?</p>
-              <p className="text-sm text-gray-600 mt-2">
-                Booth <span className="font-bold text-gray-900">#{boothConfirm.newBooth}</span> belongs to{' '}
-                <span className="font-bold text-gray-900">{boothConfirm.newMonitorName}</span>.
-              </p>
-              <p className="text-sm text-gray-500 mt-1">
-                This agent will be moved to their monitor after saving.
-              </p>
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-80 z-50 animate-slide-up">
+          <div className="bg-zinc-900 text-white rounded-2xl shadow-2xl p-4">
+            <div className="flex items-start gap-3 mb-3">
+              <span className="text-xl shrink-0">🔄</span>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm">Reassign to another monitor?</p>
+                <p className="text-xs text-zinc-300 mt-0.5">
+                  Booth <span className="font-bold text-white">#{boothConfirm.newBooth}</span> belongs to{' '}
+                  <span className="font-bold text-white">{boothConfirm.newMonitorName}</span>.
+                  This agent will be moved to them.
+                </p>
+              </div>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <button
                 onClick={() => setBoothConfirm(null)}
-                className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-xl text-sm font-medium hover:bg-gray-50"
+                className="flex-1 border border-zinc-600 text-zinc-300 hover:bg-zinc-800 py-1.5 rounded-xl text-sm font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => doSaveEdit(boothConfirm.agentId, boothConfirm.newBooth, boothConfirm.newMonitorId)}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-xl text-sm font-semibold"
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded-xl text-sm font-semibold transition-colors"
               >
                 OK, Reassign
               </button>

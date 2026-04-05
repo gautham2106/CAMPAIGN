@@ -87,15 +87,15 @@ function AddAgentModal({ constituencyId, userId, boothAssignments = [], onAdded,
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Facebook URL</label>
-              <input type="url" value={fbUrl} onChange={e => setFbUrl(e.target.value)}
+              <input type="text" value={fbUrl} onChange={e => setFbUrl(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                placeholder="https://fb.com/…" />
+                placeholder="https://fb.com/… or www.fb.com/…" />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Instagram URL</label>
-              <input type="url" value={igUrl} onChange={e => setIgUrl(e.target.value)}
+              <input type="text" value={igUrl} onChange={e => setIgUrl(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                placeholder="https://instagram.com/…" />
+                placeholder="https://instagram.com/… or www.instagram.com/…" />
             </div>
           </div>
 
@@ -1294,18 +1294,18 @@ export default function ConstituencyAdminPage() {
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-500 mb-1">Facebook URL</label>
-                        <input type="url" value={editAgentValues.fb_url}
+                        <input type="text" value={editAgentValues.fb_url}
                           onChange={e => setEditAgentValues(v => ({ ...v, fb_url: e.target.value }))}
                           className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                          placeholder="https://fb.com/…"
+                          placeholder="https://fb.com/… or www.fb.com/…"
                         />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-500 mb-1">Instagram URL</label>
-                        <input type="url" value={editAgentValues.ig_url}
+                        <input type="text" value={editAgentValues.ig_url}
                           onChange={e => setEditAgentValues(v => ({ ...v, ig_url: e.target.value }))}
                           className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                          placeholder="https://instagram.com/…"
+                          placeholder="https://instagram.com/… or www.instagram.com/…"
                         />
                       </div>
                     </div>
