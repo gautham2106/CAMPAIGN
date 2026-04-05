@@ -8,7 +8,7 @@ import MiniCalendar from '../components/MiniCalendar'
 // Validate that a URL starts with http(s)://
 function isValidLink(url) {
   if (!url || !url.trim()) return null
-  return /^https?:\/\/.+\..+/.test(url.trim())
+  return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
 const TODAY = new Date().toISOString().split('T')[0]
@@ -314,8 +314,6 @@ export default function MonitorPage() {
       phone: editValues.phone.trim() || null,
       fb_url: editValues.fb_url.trim() || null,
       ig_url: editValues.ig_url.trim() || null,
-      updated_by: user.id,
-      updated_at: new Date().toISOString(),
     }
     if (newMonitorId) {
       updateData.assigned_monitor_id = newMonitorId

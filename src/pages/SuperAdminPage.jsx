@@ -94,7 +94,7 @@ const TABS = ['Dashboard', 'Admins', 'Content', 'Constituencies', 'Field Ops']
 
 function isValidLink(url) {
   if (!url || !url.trim()) return null
-  return /^https?:\/\/.+\..+/.test(url.trim())
+  return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
 function pct(num, den) {

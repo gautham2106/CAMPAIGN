@@ -42,7 +42,7 @@ function waRemindLink(phone, agent, content) {
 // Returns true = valid https link, false = invalid/wrong format, null = not set
 function isValidLink(url) {
   if (!url || !url.trim()) return null
-  return /^https?:\/\/.+\..+/.test(url.trim())
+  return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
 export default function AgentCard({ agent, logsByPlatform, onToggle, saving, content }) {

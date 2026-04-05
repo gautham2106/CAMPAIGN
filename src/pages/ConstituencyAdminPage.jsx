@@ -10,7 +10,7 @@ import MiniCalendar from '../components/MiniCalendar'
 
 function isValidLink(url) {
   if (!url || !url.trim()) return null
-  return /^https?:\/\/.+\..+/.test(url.trim())
+  return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
 function AddAgentModal({ constituencyId, userId, onAdded, onClose }) {
@@ -178,6 +178,9 @@ export default function ConstituencyAdminPage() {
   const [showAddAgent, setShowAddAgent] = useState(false)
   const [deletingAgentId, setDeletingAgentId] = useState(null)
   const [deletingMonitorId, setDeletingMonitorId] = useState(null)
+  const [editingMonitorId, setEditingMonitorId] = useState(null)
+  const [editMonitorValues, setEditMonitorValues] = useState({ full_name: '', phone: '' })
+  const [savingMonitorEdit, setSavingMonitorEdit] = useState(false)
 
   // Agents tab: search + filter + bulk + inline edit
   const [agentSearch, setAgentSearch] = useState('')
@@ -418,8 +421,6 @@ export default function ConstituencyAdminPage() {
         assigned_monitor_id: newMonitorId,
         reassigned_from: agent?.assigned_monitor_id ?? null,
         reassigned_at: now,
-        updated_by: profile?.id ?? null,
-        updated_at: now,
       }).eq('id', agentId)
       if (error) { setError(error.message); hasError = true; break }
     }
@@ -480,8 +481,6 @@ export default function ConstituencyAdminPage() {
       booth_number: newBooth,
       fb_url: editAgentValues.fb_url.trim() || null,
       ig_url: editAgentValues.ig_url.trim() || null,
-      updated_by: profile?.id ?? null,
-      updated_at: new Date().toISOString(),
     }
     // Auto-reassign to correct monitor based on booth range
     if (newBooth != null) {
@@ -524,6 +523,18 @@ export default function ConstituencyAdminPage() {
     }
     loadBase()
     setDeletingMonitorId(null)
+  }
+
+  async function saveEditMonitor(monitorId) {
+    if (!editMonitorValues.full_name.trim()) return
+    setSavingMonitorEdit(true)
+    const { error } = await supabase.from('profiles').update({
+      full_name: editMonitorValues.full_name.trim(),
+      phone: editMonitorValues.phone.trim() || null,
+    }).eq('id', monitorId)
+    if (error) setError(error.message)
+    else { setEditingMonitorId(null); loadBase() }
+    setSavingMonitorEdit(false)
   }
 
   // ── BOOTH TABLE ROW OPERATIONS ──────────────────────────
@@ -1363,48 +1374,82 @@ export default function ConstituencyAdminPage() {
           <div className="space-y-3">
             {monitors.map(m => {
               const assignedCount = agents.filter(a => a.assigned_monitor_id === m.id).length
-              const digits = m.phone?.replace(/\D/g, '')
+              const digits = m.phone?.replace(/\D/g, '') || ''
+              const isEditingThis = editingMonitorId === m.id
               return (
                 <div key={m.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-900">{m.full_name}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{m.email}</p>
-                      {m.phone && (
-                        <p className="text-xs text-slate-600 font-medium mt-0.5">{m.phone}</p>
+                  {isEditingThis ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Full Name *</label>
+                          <input type="text" value={editMonitorValues.full_name}
+                            onChange={e => setEditMonitorValues(p => ({ ...p, full_name: e.target.value }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
+                          <input type="tel" value={editMonitorValues.phone}
+                            onChange={e => setEditMonitorValues(p => ({ ...p, phone: e.target.value }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                            placeholder="10-digit number" />
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-400">Email cannot be changed here (managed via authentication).</p>
+                      <div className="flex gap-2">
+                        <button onClick={() => setEditingMonitorId(null)}
+                          className="flex-1 border border-slate-300 text-slate-600 text-sm py-2 rounded-lg hover:bg-slate-50">Cancel</button>
+                        <button onClick={() => saveEditMonitor(m.id)} disabled={savingMonitorEdit || !editMonitorValues.full_name.trim()}
+                          className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-semibold text-sm py-2 rounded-lg">
+                          {savingMonitorEdit ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-slate-900">{m.full_name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{m.email}</p>
+                          {m.phone
+                            ? <p className="text-xs text-slate-600 font-medium mt-0.5">{m.phone}</p>
+                            : <p className="text-xs text-orange-500 mt-0.5">No phone — click Edit to add</p>
+                          }
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                            assignedCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {assignedCount} agent{assignedCount !== 1 ? 's' : ''}
+                          </span>
+                          <button
+                            onClick={() => { setEditingMonitorId(m.id); setEditMonitorValues({ full_name: m.full_name, phone: m.phone ?? '' }) }}
+                            className="text-slate-500 hover:text-slate-800 hover:bg-slate-100 text-xs px-2 py-1 rounded-lg transition-colors border border-slate-200"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMonitor(m)}
+                            disabled={deletingMonitorId === m.id}
+                            className="text-red-400 hover:text-red-600 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors disabled:opacity-40 border border-red-200"
+                          >
+                            {deletingMonitorId === m.id ? '…' : 'Delete'}
+                          </button>
+                        </div>
+                      </div>
+                      {digits && (
+                        <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                          <a href={`tel:+${digits}`}
+                            className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                            📞 Call
+                          </a>
+                          <a href={`https://wa.me/${digits}`} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                            💬 WhatsApp
+                          </a>
+                        </div>
                       )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                        assignedCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                      }`}>
-                        {assignedCount} agent{assignedCount !== 1 ? 's' : ''}
-                      </span>
-                      <button
-                        onClick={() => handleDeleteMonitor(m)}
-                        disabled={deletingMonitorId === m.id}
-                        className="text-red-400 hover:text-red-600 hover:bg-red-50 text-xs px-2 py-1 rounded-lg transition-colors disabled:opacity-40 border border-red-200"
-                      >
-                        {deletingMonitorId === m.id ? '…' : 'Delete'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Contact buttons */}
-                  {digits && (
-                    <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
-                      <a href={`tel:+${digits}`}
-                        className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
-                        📞 Call
-                      </a>
-                      <a href={`https://wa.me/${digits}`} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
-                        💬 WhatsApp
-                      </a>
-                    </div>
-                  )}
-                  {!m.phone && (
-                    <p className="text-xs text-orange-500 mt-2">No phone number — add via Supabase or edit profile</p>
+                    </>
                   )}
                 </div>
               )
