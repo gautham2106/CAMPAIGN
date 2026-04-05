@@ -165,6 +165,28 @@ CREATE POLICY "Monitor reads own assigned agents"
     AND assigned_monitor_id = auth.uid()
   );
 
+DROP POLICY IF EXISTS "Monitor inserts agents" ON digital_agents;
+CREATE POLICY "Monitor inserts agents"
+  ON digital_agents FOR INSERT TO authenticated
+  WITH CHECK (
+    get_my_role() = 'monitor'
+    AND assigned_monitor_id = auth.uid()
+  );
+
+DROP POLICY IF EXISTS "Monitor updates own assigned agents" ON digital_agents;
+CREATE POLICY "Monitor updates own assigned agents"
+  ON digital_agents FOR UPDATE TO authenticated
+  USING (
+    get_my_role() = 'monitor'
+    AND assigned_monitor_id = auth.uid()
+  )
+  WITH CHECK (
+    get_my_role() = 'monitor'
+    AND assigned_monitor_id = auth.uid()
+  );
+-- NOTE: No DELETE policy for monitors — they cannot delete agents.
+-- Only constituency admins (FOR ALL policy above) and super admins can delete.
+
 -- ── DAILY CONTENT ──
 DROP POLICY IF EXISTS "All authenticated can read content" ON daily_content;
 CREATE POLICY "All authenticated can read content"
