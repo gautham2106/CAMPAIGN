@@ -278,36 +278,37 @@ export default function MonitorPage() {
     })
   }
 
-  // Find which monitor owns a booth number based on loaded assignments
-  function findMonitorForBooth(boothNum) {
-    const n = parseInt(boothNum)
-    if (isNaN(n)) return null
-    const match = boothAssignments.find(a => n >= a.booth_from && n <= a.booth_to)
-    return match ? { monitor_id: match.monitor_id } : null
-  }
-
   async function handleSaveEdit(agentId) {
     const newBooth = editValues.booth_number !== '' ? parseInt(editValues.booth_number) : null
     const agent = agents.find(a => a.id === agentId)
     const boothChanged = newBooth !== null && newBooth !== agent?.booth_number
 
-    // If booth changed, check if it belongs to a different monitor
-    if (boothChanged) {
-      const match = findMonitorForBooth(newBooth)
+    if (boothChanged && profile?.constituency_id) {
+      // Fresh fetch of ALL constituency booth assignments using admin client (bypasses RLS)
+      const client = supabaseAdmin ?? supabase
+      const { data: allAssignments } = await client
+        .from('monitor_booth_assignments')
+        .select('*')
+        .eq('constituency_id', profile.constituency_id)
+
+      const match = (allAssignments ?? []).find(a => newBooth >= a.booth_from && newBooth <= a.booth_to)
+
       if (match && match.monitor_id !== user.id) {
-        // Need to fetch monitor name for the confirmation message
+        // Booth belongs to a different monitor — show confirmation toast
         const { data: mon } = await supabase
           .from('profiles').select('full_name').eq('id', match.monitor_id).single()
+        // Snapshot editValues now so the toast OK button has correct data regardless of state
         setBoothConfirm({
           agentId,
           newBooth,
           newMonitorId: match.monitor_id,
           newMonitorName: mon?.full_name ?? 'another monitor',
+          snapshot: { ...editValues },
         })
         return
       }
     }
-    await doSaveEdit(agentId, newBooth, null)
+    await doSaveEdit(agentId, newBooth, null, editValues)
   }
 
   async function clearReassignment(agentId) {
@@ -317,24 +318,26 @@ export default function MonitorPage() {
     if (!error) loadDateData()
   }
 
-  async function doSaveEdit(agentId, newBooth, newMonitorId) {
+  async function doSaveEdit(agentId, newBooth, newMonitorId, vals) {
+    const v = vals ?? editValues
     setSavingEdit(true)
     setBoothConfirm(null)
     const updateData = {
-      name: editValues.name.trim(),
+      name: v.name.trim(),
       booth_number: newBooth,
-      phone: editValues.phone.trim() || null,
-      fb_url: editValues.fb_url.trim() || null,
-      ig_url: editValues.ig_url.trim() || null,
+      phone: v.phone.trim() || null,
+      fb_url: v.fb_url.trim() || null,
+      ig_url: v.ig_url.trim() || null,
     }
-    if (newMonitorId) {
+    if (newMonitorId && newMonitorId !== user.id) {
       updateData.assigned_monitor_id = newMonitorId
       updateData.reassigned_from = user.id
       updateData.reassigned_at = new Date().toISOString()
     }
     const { error } = await supabase.from('digital_agents').update(updateData).eq('id', agentId)
-    if (error) setError(error.message)
-    else { setEditingAgentId(null); loadDateData() }
+    if (error) { setError(error.message); setSavingEdit(false); return }
+    setEditingAgentId(null)
+    loadDateData()
     setSavingEdit(false)
   }
 
@@ -527,7 +530,7 @@ export default function MonitorPage() {
                 Cancel
               </button>
               <button
-                onClick={() => doSaveEdit(boothConfirm.agentId, boothConfirm.newBooth, boothConfirm.newMonitorId)}
+                onClick={() => doSaveEdit(boothConfirm.agentId, boothConfirm.newBooth, boothConfirm.newMonitorId, boothConfirm.snapshot)}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded-xl text-sm font-semibold transition-colors"
               >
                 OK, Reassign
