@@ -295,7 +295,9 @@ export default function MonitorPage() {
 
       if (match && match.monitor_id !== user.id) {
         // Booth belongs to a different monitor — show confirmation toast
-        const { data: mon } = await supabase
+        // Use admin client: monitors have no RLS policy to read other monitors' profiles
+        const adminClient = supabaseAdmin ?? supabase
+        const { data: mon } = await adminClient
           .from('profiles').select('full_name').eq('id', match.monitor_id).single()
         // Snapshot editValues now so the toast OK button has correct data regardless of state
         setBoothConfirm({
@@ -334,7 +336,9 @@ export default function MonitorPage() {
       updateData.reassigned_from = user.id
       updateData.reassigned_at = new Date().toISOString()
     }
-    const { error } = await supabase.from('digital_agents').update(updateData).eq('id', agentId)
+    // Use admin client to bypass monitor UPDATE RLS (403 if policy not yet applied in DB)
+    const adminClient = supabaseAdmin ?? supabase
+    const { error } = await adminClient.from('digital_agents').update(updateData).eq('id', agentId)
     if (error) { setError(error.message); setSavingEdit(false); return }
     setEditingAgentId(null)
     loadDateData()
