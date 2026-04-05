@@ -105,17 +105,6 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
             </a>
           )}
 
-          {/* WA Remind — pre-filled Tamil reminder (only if content selected) */}
-          {remindUrl && (
-            <a href={remindUrl} target="_blank" rel="noopener noreferrer"
-              title="Send Tamil reminder to post content"
-              className="flex flex-col items-center justify-center bg-red-500 hover:bg-red-600 active:bg-red-700 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
-            >
-              <span className="text-base leading-none">🔔</span>
-              <span>Remind</span>
-            </a>
-          )}
-
           {agent.fb_url && (
             <a href={fbValid ? agent.fb_url : undefined}
               target="_blank" rel="noopener noreferrer"
@@ -152,6 +141,17 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
             </a>
           )}
 
+          {/* WA Remind — pre-filled Tamil reminder (only if content selected) */}
+          {remindUrl && (
+            <a href={remindUrl} target="_blank" rel="noopener noreferrer"
+              title="Send Tamil reminder to post content"
+              className="flex flex-col items-center justify-center bg-red-500 hover:bg-red-600 active:bg-red-700 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
+            >
+              <span className="text-base leading-none">🔔</span>
+              <span>Remind</span>
+            </a>
+          )}
+
           {hasPhone && (
             <a href={`tel:+${normalizePhone(agent.phone)}`}
               className="flex flex-col items-center justify-center bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
@@ -165,7 +165,7 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
         {/* Legend / invalid link warning */}
         {(fbValid === false || igValid === false) && (
           <p className="text-xs text-orange-600 -mt-1">
-            ● Invalid link detected — must start with https://
+            ● Invalid link detected — must start with https:// or www.
           </p>
         )}
         {content && checkUrl && (fbValid !== false && igValid !== false) && (

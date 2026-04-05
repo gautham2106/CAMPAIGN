@@ -13,7 +13,7 @@ function isValidLink(url) {
   return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
-function AddAgentModal({ constituencyId, userId, onAdded, onClose }) {
+function AddAgentModal({ constituencyId, userId, boothAssignments = [], onAdded, onClose }) {
   const [name, setName] = useState('')
   const [gender, setGender] = useState('')
   const [booth, setBooth] = useState('')
@@ -27,15 +27,22 @@ function AddAgentModal({ constituencyId, userId, onAdded, onClose }) {
     e.preventDefault()
     setSaving(true)
     setError('')
+    const boothNum = booth ? parseInt(booth) : null
+    let autoMonitorId = null
+    if (boothNum !== null && !isNaN(boothNum)) {
+      const match = boothAssignments.find(a => boothNum >= a.booth_from && boothNum <= a.booth_to)
+      if (match) autoMonitorId = match.monitor_id
+    }
     const { error } = await supabase.from('digital_agents').insert({
       name: name.trim(),
       gender: gender || null,
-      booth_number: booth ? parseInt(booth) : null,
+      booth_number: boothNum,
       phone: phone.trim() || null,
       fb_url: fbUrl.trim() || null,
       ig_url: igUrl.trim() || null,
       constituency_id: constituencyId,
       created_by: userId ?? null,
+      assigned_monitor_id: autoMonitorId,
     })
     if (error) { setError(error.message); setSaving(false) }
     else { onAdded?.(); onClose?.() }
@@ -528,7 +535,8 @@ export default function ConstituencyAdminPage() {
   async function saveEditMonitor(monitorId) {
     if (!editMonitorValues.full_name.trim()) return
     setSavingMonitorEdit(true)
-    const { error } = await supabase.from('profiles').update({
+    const client = supabaseAdmin ?? supabase
+    const { error } = await client.from('profiles').update({
       full_name: editMonitorValues.full_name.trim(),
       phone: editMonitorValues.phone.trim() || null,
     }).eq('id', monitorId)
@@ -673,6 +681,7 @@ export default function ConstituencyAdminPage() {
         <AddAgentModal
           constituencyId={constituencyId}
           userId={profile?.id}
+          boothAssignments={boothAssignments}
           onAdded={loadBase}
           onClose={() => setShowAddAgent(false)}
         />

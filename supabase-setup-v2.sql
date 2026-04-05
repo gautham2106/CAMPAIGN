@@ -312,10 +312,15 @@ CREATE POLICY IF NOT EXISTS "Const admins manage booth assignments"
     )
   );
 
--- Monitors can read their own assignments
-CREATE POLICY IF NOT EXISTS "Monitors read own booth assignments"
+-- Monitors can read all assignments in their constituency (needed to detect cross-monitor booth reassignment)
+-- Migration: DROP POLICY IF EXISTS "Monitors read own booth assignments" ON monitor_booth_assignments; then re-run this
+CREATE POLICY IF NOT EXISTS "Monitors read constituency booth assignments"
   ON monitor_booth_assignments FOR SELECT
-  USING (monitor_id = auth.uid());
+  USING (
+    constituency_id IN (
+      SELECT constituency_id FROM profiles WHERE id = auth.uid()
+    )
+  );
 
 -- Super admins full access
 CREATE POLICY IF NOT EXISTS "Super admins full booth assignments"
@@ -338,3 +343,9 @@ CREATE INDEX IF NOT EXISTS idx_compliance_logs_content ON compliance_logs(conten
 CREATE INDEX IF NOT EXISTS idx_daily_content_date ON daily_content(content_date);
 CREATE INDEX IF NOT EXISTS idx_profiles_constituency ON profiles(constituency_id);
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+
+-- ============================================================
+-- MIGRATION: If you have already run this script previously:
+-- DROP POLICY IF EXISTS "Monitors read own booth assignments" ON monitor_booth_assignments;
+-- Then re-run the CREATE POLICY above ("Monitors read constituency booth assignments")
+-- ============================================================

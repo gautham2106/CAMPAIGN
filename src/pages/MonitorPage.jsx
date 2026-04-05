@@ -86,13 +86,15 @@ export default function MonitorPage() {
       .then(({ data, error }) => {
         if (!error) setAgents(data ?? [])
       })
-    supabase
-      .from('monitor_booth_assignments')
-      .select('*')
-      .eq('monitor_id', user.id)
-      .order('booth_from')
-      .then(({ data }) => setBoothAssignments(data ?? []))
-  }, [user])
+    if (profile?.constituency_id) {
+      supabase
+        .from('monitor_booth_assignments')
+        .select('*')
+        .eq('constituency_id', profile.constituency_id)
+        .order('booth_from')
+        .then(({ data }) => setBoothAssignments(data ?? []))
+    }
+  }, [user, profile?.constituency_id])
 
   // Load content + compliance whenever date changes
   useEffect(() => {
@@ -232,7 +234,7 @@ export default function MonitorPage() {
   // Build list of valid booth numbers from this monitor's assigned ranges
   function getAssignedBooths() {
     const booths = []
-    for (const a of boothAssignments) {
+    for (const a of boothAssignments.filter(a => a.monitor_id === user.id)) {
       for (let b = a.booth_from; b <= a.booth_to; b++) booths.push(b)
     }
     return booths
@@ -303,6 +305,13 @@ export default function MonitorPage() {
       }
     }
     await doSaveEdit(agentId, newBooth, null)
+  }
+
+  async function clearReassignment(agentId) {
+    const { error } = await supabase.from('digital_agents')
+      .update({ reassigned_from: null, reassigned_at: null })
+      .eq('id', agentId)
+    if (!error) loadDateData()
   }
 
   async function doSaveEdit(agentId, newBooth, newMonitorId) {
@@ -431,7 +440,7 @@ export default function MonitorPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
-                    Booth #{assignedBooths.length > 0 ? `(your range${boothAssignments.length > 1 ? 's' : ''}: ${boothAssignments.map(a => `${a.booth_from}–${a.booth_to}`).join(', ')})` : ''}
+                    Booth #{assignedBooths.length > 0 ? `(your range${boothAssignments.filter(a => a.monitor_id === user.id).length > 1 ? 's' : ''}: ${boothAssignments.filter(a => a.monitor_id === user.id).map(a => `${a.booth_from}–${a.booth_to}`).join(', ')})` : ''}
                   </label>
                   {assignedBooths.length > 0 && assignedBooths.length <= 100 ? (
                     <select value={addForm.booth_number} onChange={e => setAddForm(p => ({ ...p, booth_number: e.target.value }))}
@@ -458,7 +467,7 @@ export default function MonitorPage() {
                 <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
                   Facebook URL
                   {addForm.fb_url && isValidLink(addForm.fb_url) === false && (
-                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https:// or www.</span>
                   )}
                 </label>
                 <input type="text" value={addForm.fb_url} onChange={e => setAddForm(p => ({ ...p, fb_url: e.target.value }))}
@@ -471,7 +480,7 @@ export default function MonitorPage() {
                 <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
                   Instagram URL
                   {addForm.ig_url && isValidLink(addForm.ig_url) === false && (
-                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https:// or www.</span>
                   )}
                 </label>
                 <input type="text" value={addForm.ig_url} onChange={e => setAddForm(p => ({ ...p, ig_url: e.target.value }))}
@@ -526,11 +535,11 @@ export default function MonitorPage() {
       )}
 
       {/* ── BOOTH RANGES BANNER ── */}
-      {boothAssignments.length > 0 && (
+      {boothAssignments.some(a => a.monitor_id === user.id) && (
         <div className="bg-zinc-900 text-white rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2 text-sm">
           <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wide shrink-0">Your Booths</span>
           <div className="flex flex-wrap gap-1.5">
-            {boothAssignments.map(a => (
+            {boothAssignments.filter(a => a.monitor_id === user.id).map(a => (
               <span key={a.id} className="bg-red-600 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
                 {a.booth_from}–{a.booth_to}
               </span>
@@ -720,7 +729,7 @@ export default function MonitorPage() {
                           <label className="block text-xs font-semibold text-slate-500 mb-1">
                             Facebook URL
                             {editValues.fb_url && isValidLink(editValues.fb_url) === false && (
-                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https:// or www.</span>
                             )}
                           </label>
                           <input type="text" value={editValues.fb_url} onChange={e => setEditValues(p => ({ ...p, fb_url: e.target.value }))}
@@ -733,7 +742,7 @@ export default function MonitorPage() {
                           <label className="block text-xs font-semibold text-slate-500 mb-1">
                             Instagram URL
                             {editValues.ig_url && isValidLink(editValues.ig_url) === false && (
-                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https://</span>
+                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must start with https:// or www.</span>
                             )}
                           </label>
                           <input type="text" value={editValues.ig_url} onChange={e => setEditValues(p => ({ ...p, ig_url: e.target.value }))}
@@ -769,8 +778,13 @@ export default function MonitorPage() {
                         {/* Reassignment notification */}
                         {agent.reassigned_from && (
                           <div className="absolute bottom-2 left-2 right-2">
-                            <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-medium">
+                            <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1">
                               ↩ Reassigned from {monitorNames[agent.reassigned_from] ?? 'another monitor'}
+                              <button
+                                onClick={e => { e.stopPropagation(); clearReassignment(agent.id) }}
+                                className="ml-1 text-amber-700 hover:text-amber-900 font-bold leading-none text-sm"
+                                title="Dismiss reassignment note"
+                              >×</button>
                             </span>
                           </div>
                         )}
