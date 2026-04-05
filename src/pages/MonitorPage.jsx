@@ -604,6 +604,19 @@ export default function MonitorPage() {
             </div>
           )}
 
+          {/* Completion banner */}
+          {agents.length > 0 && (() => {
+            const pct = Math.round(doneAgents.length / agents.length * 100)
+            const bg = pct === 100 ? 'bg-green-600' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+            const msg = pct === 100 ? '🎉 All agents done!' : todoAgents.length === agents.length ? `🚨 ${agents.length} agents still pending` : `⚡ ${todoAgents.length} agents left to verify`
+            return (
+              <div className={`${bg} text-white rounded-xl px-4 py-3 mb-3 flex items-center justify-between`}>
+                <span className="text-sm font-semibold">{msg}</span>
+                <span className="text-xl font-bold">{pct}%</span>
+              </div>
+            )
+          })()}
+
           {/* Stats bar + Add Agent */}
           <div className="flex items-center gap-3 mb-3 text-xs flex-wrap">
             <span className="text-gray-500">{agents.length} agents total</span>
@@ -611,12 +624,6 @@ export default function MonitorPage() {
             <span className="text-orange-600 font-medium">{todoAgents.length} to do</span>
             <span className="w-px h-3 bg-gray-200" />
             <span className="text-green-600 font-medium">{doneAgents.length} done</span>
-            {agents.length > 0 && (
-              <>
-                <span className="w-px h-3 bg-gray-200" />
-                <span className="text-gray-500">{Math.round(doneAgents.length / agents.length * 100)}%</span>
-              </>
-            )}
             <button
               onClick={() => setShowAddAgent(true)}
               className="ml-auto bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"

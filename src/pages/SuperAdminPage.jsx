@@ -487,36 +487,91 @@ export default function SuperAdminPage() {
 
           {/* Constituency breakdown */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
               <h3 className="font-bold text-gray-900">Constituency Overview — {isToday ? 'Today' : displayDate}</h3>
+              {dateContents.length > 0 && (() => {
+                const criticalCount = constituencies.filter(c => {
+                  const ids = allAgents.filter(a => a.constituency_id === c.id).map(a => a.id)
+                  return ids.length > 0 && computeStats(ids).donePct < 50
+                }).length
+                return criticalCount > 0 ? (
+                  <span className="text-xs bg-red-100 text-red-700 font-bold px-2.5 py-1 rounded-full">
+                    ⚠ {criticalCount} below 50%
+                  </span>
+                ) : null
+              })()}
             </div>
             {constituencies.length === 0 ? (
               <div className="p-8 text-center text-gray-400 text-sm">No constituencies yet.</div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {constituencies.map(c => {
-                  const cAgentIds = allAgents.filter(a => a.constituency_id === c.id).map(a => a.id)
-                  const monCount = allMonitors.filter(m => m.constituency_id === c.id).length
-                  const s = computeStats(cAgentIds)
+                {[...constituencies]
+                  .map(c => ({ c, s: computeStats(allAgents.filter(a => a.constituency_id === c.id).map(a => a.id)) }))
+                  .sort((a, b) => a.s.donePct - b.s.donePct)
+                  .map(({ c, s }) => {
+                  const cMonitors = allMonitors.filter(m => m.constituency_id === c.id)
+                  const isExpanded = expandedConstId === c.id
+                  const statusBg = s.donePct === 100 ? 'bg-green-50' : s.donePct > 50 ? 'bg-yellow-50' : s.total > 0 ? 'bg-red-50' : ''
                   return (
-                    <div key={c.id} className="px-5 py-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <p className="font-semibold text-gray-900">{c.name}</p>
-                          <p className="text-xs text-gray-500">{monCount} monitors · {cAgentIds.length} agents</p>
+                    <div key={c.id}>
+                      <button
+                        className={`w-full px-5 py-4 text-left hover:brightness-95 transition-all ${statusBg}`}
+                        onClick={() => setExpandedConstId(isExpanded ? null : c.id)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-semibold text-gray-900">{c.name}</p>
+                            <p className="text-xs text-gray-500">{cMonitors.length} monitors · {s.total} agents</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <p className={`text-lg font-bold ${s.donePct === 100 ? 'text-green-600' : s.donePct > 50 ? 'text-yellow-600' : s.total > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                                {s.total > 0 ? `${s.donePct}%` : '—'}
+                              </p>
+                              <p className="text-xs text-gray-400">{s.done}/{s.total} done</p>
+                            </div>
+                            <span className="text-gray-400 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className={`text-lg font-bold ${s.donePct === 100 ? 'text-green-600' : s.donePct > 50 ? 'text-yellow-600' : 'text-red-500'}`}>
-                            {s.done}/{s.total}
-                          </p>
-                          <p className="text-xs text-gray-400">verified</p>
-                        </div>
-                      </div>
-                      {dateContents.length > 0 && cAgentIds.length > 0 && (
-                        <div className="space-y-1 mt-2">
-                          {PLATFORMS.map(p => (
-                            <PlatformBar key={p} label={P_SHORT[p]} value={s.platform[p]} />
-                          ))}
+                        {dateContents.length > 0 && s.total > 0 && (
+                          <div className="space-y-1 mt-2">
+                            {PLATFORMS.map(p => <PlatformBar key={p} label={P_SHORT[p]} value={s.platform[p]} />)}
+                          </div>
+                        )}
+                      </button>
+                      {/* Expanded: monitor drill-down */}
+                      {isExpanded && (
+                        <div className="border-t border-gray-100 bg-gray-50 divide-y divide-gray-100">
+                          {cMonitors.length === 0 ? (
+                            <p className="px-6 py-3 text-xs text-gray-400">No monitors assigned.</p>
+                          ) : (
+                            [...cMonitors]
+                              .map(m => ({ m, ms: computeStats(allAgents.filter(a => a.assigned_monitor_id === m.id).map(a => a.id)) }))
+                              .sort((a, b) => a.ms.donePct - b.ms.donePct)
+                              .map(({ m, ms }) => {
+                                const phone = m.phone?.replace(/\D/g, '') || ''
+                                const mStatusColor = ms.donePct === 100 ? 'text-green-600' : ms.donePct > 50 ? 'text-yellow-600' : ms.total > 0 ? 'text-red-500' : 'text-gray-400'
+                                return (
+                                  <div key={m.id} className="px-6 py-3 flex items-center gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-800">{m.full_name}</p>
+                                      <p className="text-xs text-gray-400">{ms.done}/{ms.total} agents done</p>
+                                    </div>
+                                    <span className={`text-base font-bold ${mStatusColor}`}>
+                                      {ms.total > 0 ? `${ms.donePct}%` : '—'}
+                                    </span>
+                                    {phone && ms.donePct < 80 && (
+                                      <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
+                                        target="_blank" rel="noopener noreferrer"
+                                        title="WhatsApp this monitor"
+                                        className="shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1 rounded-lg">
+                                        💬
+                                      </a>
+                                    )}
+                                  </div>
+                                )
+                              })
+                          )}
                         </div>
                       )}
                     </div>

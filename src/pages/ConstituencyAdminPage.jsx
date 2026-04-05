@@ -744,11 +744,8 @@ export default function ConstituencyAdminPage() {
               { label: 'Monitors', value: monitors.length, icon: '👤' },
               { label: 'Agents', value: agents.length, icon: '🗳️' },
               { label: 'Unassigned', value: unassigned.length, icon: '⚠️', warn: unassigned.length > 0 },
-              { label: "Today's Content", value: (() => {
-                // Count today's content (separate from selectedDate)
-                return null
-              })(), hide: true },
-            ].filter(s => !s.hide).map(s => (
+              { label: "Content Today", value: contents.length, icon: '📋', warn: contents.length === 0 },
+            ].map(s => (
               <div key={s.label} className={`bg-white rounded-xl border p-4 ${s.warn ? 'border-orange-200 bg-orange-50' : 'border-gray-200'}`}>
                 <div className="text-xl mb-1">{s.icon}</div>
                 <div className={`text-2xl font-bold ${s.warn ? 'text-orange-600' : 'text-gray-900'}`}>{s.value}</div>
@@ -784,28 +781,69 @@ export default function ConstituencyAdminPage() {
             </div>
           ) : (
             <>
-              {/* Monitor performance cards */}
+              {/* Alert banner for lagging monitors */}
+              {(() => {
+                const lagging = monitors.filter(m => {
+                  const s = getMonitorStats(m.id)
+                  return s.total > 0 && s.donePct === 0
+                })
+                const behind = monitors.filter(m => {
+                  const s = getMonitorStats(m.id)
+                  return s.total > 0 && s.donePct > 0 && s.donePct < 50
+                })
+                if (!lagging.length && !behind.length) return null
+                return (
+                  <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 space-y-1">
+                    {lagging.length > 0 && (
+                      <p className="text-sm font-semibold text-red-700">
+                        🚨 {lagging.length} monitor{lagging.length > 1 ? 's' : ''} at 0% — no agents verified yet: {lagging.map(m => m.full_name).join(', ')}
+                      </p>
+                    )}
+                    {behind.length > 0 && (
+                      <p className="text-sm text-red-600">
+                        ⚠ {behind.length} monitor{behind.length > 1 ? 's' : ''} below 50%: {behind.map(m => m.full_name).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {/* Monitor performance cards — sorted worst first */}
               <div>
                 <h3 className="font-bold text-gray-900 mb-3">Monitor Performance</h3>
                 <div className="space-y-3">
-                  {monitors.map(m => {
-                    const stats = getMonitorStats(m.id)
-                    const statusColor = stats.donePct === 100 ? 'border-green-200 bg-green-50' : stats.donePct > 50 ? 'border-yellow-200 bg-yellow-50' : 'border-gray-200'
+                  {[...monitors]
+                    .map(m => ({ m, stats: getMonitorStats(m.id) }))
+                    .sort((a, b) => a.stats.donePct - b.stats.donePct)
+                    .map(({ m, stats }) => {
+                    const statusColor = stats.donePct === 100 ? 'border-green-200 bg-green-50' : stats.donePct > 50 ? 'border-yellow-200 bg-yellow-50' : stats.total > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'
+                    const phone = m.phone?.replace(/\D/g, '') || ''
 
                     return (
                       <div key={m.id} className={`bg-white rounded-xl border p-4 ${statusColor}`}>
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
+                        <div className="flex items-start justify-between mb-3 gap-3">
+                          <div className="flex-1 min-w-0">
                             <p className="font-semibold text-gray-900">{m.full_name}</p>
                             <p className="text-xs text-gray-500">{stats.total} agents</p>
                           </div>
-                          <div className="text-right">
-                            <span className={`text-xl font-bold ${
-                              stats.donePct === 100 ? 'text-green-600' : stats.donePct > 50 ? 'text-yellow-600' : 'text-red-500'
-                            }`}>
-                              {stats.done}/{stats.total}
-                            </span>
-                            <p className="text-xs text-gray-400">fully done</p>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* WA remind button for lagging monitors */}
+                            {phone && stats.total > 0 && stats.donePct < 80 && (
+                              <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
+                                target="_blank" rel="noopener noreferrer"
+                                title="WhatsApp monitor to follow up"
+                                className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">
+                                💬 Remind
+                              </a>
+                            )}
+                            <div className="text-right">
+                              <span className={`text-xl font-bold ${
+                                stats.donePct === 100 ? 'text-green-600' : stats.donePct > 50 ? 'text-yellow-600' : stats.total > 0 ? 'text-red-500' : 'text-gray-400'
+                              }`}>
+                                {stats.total > 0 ? `${stats.donePct}%` : '—'}
+                              </span>
+                              <p className="text-xs text-gray-400">{stats.done}/{stats.total} done</p>
+                            </div>
                           </div>
                         </div>
 
