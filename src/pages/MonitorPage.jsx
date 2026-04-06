@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, supabaseAdmin } from '../lib/supabase'
-import { getTodayIST, daysAgoIST } from '../lib/dateUtils'
+import { getTodayIST, daysAgoIST, isValidPhone } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 import AgentCard from '../components/AgentCard'
@@ -467,9 +467,16 @@ export default function MonitorPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">WhatsApp / Phone</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                  WhatsApp / Phone
+                  {addForm.phone && isValidPhone(addForm.phone) === false && (
+                    <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must be 10 digits</span>
+                  )}
+                </label>
                 <input type="tel" value={addForm.phone} onChange={e => setAddForm(p => ({ ...p, phone: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                    addForm.phone && isValidPhone(addForm.phone) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                  }`}
                   placeholder="10-digit number (country code auto-added)" />
               </div>
               <div>
@@ -728,9 +735,16 @@ export default function MonitorPage() {
                               placeholder="e.g. 42" />
                           </div>
                           <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                              Phone
+                              {editValues.phone && isValidPhone(editValues.phone) === false && (
+                                <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must be 10 digits</span>
+                              )}
+                            </label>
                             <input type="tel" value={editValues.phone} onChange={e => setEditValues(p => ({ ...p, phone: e.target.value }))}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                              className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                                editValues.phone && isValidPhone(editValues.phone) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                              }`}
                               placeholder="10-digit number" />
                           </div>
                         </div>

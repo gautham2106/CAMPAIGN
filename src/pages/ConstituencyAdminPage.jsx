@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, supabaseAdmin } from '../lib/supabase'
-import { getTodayIST, daysAgoIST } from '../lib/dateUtils'
+import { getTodayIST, daysAgoIST, isValidPhone } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 import CSVImport from '../components/CSVImport'
@@ -81,10 +81,17 @@ function AddAgentModal({ constituencyId, userId, boothAssignments = [], onAdded,
                 placeholder="e.g. 42" />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Phone</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                Phone
+                {phone && isValidPhone(phone) === false && (
+                  <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must be 10 digits</span>
+                )}
+              </label>
               <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                placeholder="+91 98765 43210" />
+                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                  phone && isValidPhone(phone) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                }`}
+                placeholder="10-digit number" />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Facebook URL</label>
@@ -1285,10 +1292,17 @@ export default function ConstituencyAdminPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">
+                          Phone
+                          {editAgentValues.phone && isValidPhone(editAgentValues.phone) === false && (
+                            <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must be 10 digits</span>
+                          )}
+                        </label>
                         <input type="tel" value={editAgentValues.phone}
                           onChange={e => setEditAgentValues(v => ({ ...v, phone: e.target.value }))}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                            editAgentValues.phone && isValidPhone(editAgentValues.phone) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                          }`}
                         />
                       </div>
                       <div>
@@ -1338,7 +1352,14 @@ export default function ConstituencyAdminPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      {a.phone && <span className="text-xs text-gray-400">{a.phone}</span>}
+                      {a.phone && (
+                        <span className="text-xs text-gray-400 inline-flex items-center gap-1">
+                          {a.phone}
+                          {isValidPhone(a.phone) === false && (
+                            <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" title="Invalid phone — must be 10 digits" />
+                          )}
+                        </span>
+                      )}
                       {!filterMonitorId && (mon
                         ? <span className="text-xs text-slate-500">{mon.full_name}</span>
                         : <span className="text-xs text-orange-500">Unassigned</span>

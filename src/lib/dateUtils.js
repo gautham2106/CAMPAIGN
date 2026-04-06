@@ -12,3 +12,13 @@ export function daysAgoIST(n) {
   d.setDate(d.getDate() - n)
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
 }
+
+// Returns true = valid Indian mobile, false = invalid format, null = not set
+// Accepts: 10 digits, or 12 digits starting with 91 (country code already added)
+export function isValidPhone(phone) {
+  if (!phone || !phone.trim()) return null
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length === 10) return true
+  if (digits.length === 12 && digits.startsWith('91')) return true
+  return false
+}

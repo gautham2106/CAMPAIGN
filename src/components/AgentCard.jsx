@@ -1,3 +1,5 @@
+import { isValidPhone } from '../lib/dateUtils'
+
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 
 // Normalize phone: strip non-digits, prepend 91 if 10-digit Indian number
@@ -56,6 +58,7 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
 
   const fbValid = isValidLink(agent.fb_url)
   const igValid = isValidLink(agent.ig_url)
+  const phoneValid = isValidPhone(agent.phone)
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
@@ -98,8 +101,11 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
           {checkUrl && (
             <a href={checkUrl} target="_blank" rel="noopener noreferrer"
               title="Open WhatsApp to check if posted"
-              className="flex flex-col items-center justify-center bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
+              className="relative flex flex-col items-center justify-center bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
             >
+              {phoneValid === false && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-orange-400 rounded-full border border-white" title="Invalid phone number" />
+              )}
               <span className="text-base leading-none">💬</span>
               <span>Check</span>
             </a>
@@ -154,18 +160,24 @@ export default function AgentCard({ agent, logsByPlatform, onToggle, saving, con
 
           {hasPhone && (
             <a href={`tel:+${normalizePhone(agent.phone)}`}
-              className="flex flex-col items-center justify-center bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
+              className="relative flex flex-col items-center justify-center bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white rounded-xl py-2 px-3 text-xs font-semibold transition-colors gap-0.5 min-w-[52px]"
             >
+              {phoneValid === false && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-orange-400 rounded-full border border-white" title="Invalid phone number" />
+              )}
               <span className="text-base leading-none">📞</span>
               <span>Call</span>
             </a>
           )}
         </div>
 
-        {/* Legend / invalid link warning */}
-        {(fbValid === false || igValid === false) && (
+        {/* Legend / invalid warnings */}
+        {(fbValid === false || igValid === false || phoneValid === false) && (
           <p className="text-xs text-orange-600 -mt-1">
-            ● Invalid link detected — must start with https:// or www.
+            {[
+              (fbValid === false || igValid === false) && '● Invalid link — must start with https:// or www.',
+              phoneValid === false && '● Invalid phone — must be 10 digits',
+            ].filter(Boolean).join('  ')}
           </p>
         )}
         {content && checkUrl && (fbValid !== false && igValid !== false) && (
