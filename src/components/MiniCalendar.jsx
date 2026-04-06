@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { getTodayIST } from '../lib/dateUtils'
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 export default function MiniCalendar({ value, onChange, markedDates = [] }) {
-  const today = new Date().toISOString().split('T')[0]
+  const today = getTodayIST()
   const [view, setView] = useState(() => {
     const d = value ? new Date(value + 'T12:00:00') : new Date()
     return { year: d.getFullYear(), month: d.getMonth() }

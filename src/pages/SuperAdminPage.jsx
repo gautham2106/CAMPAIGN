@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, supabaseAdmin } from '../lib/supabase'
+import { getTodayIST } from '../lib/dateUtils'
 import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
@@ -86,7 +87,7 @@ function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   )
 }
 
-const TODAY = new Date().toISOString().split('T')[0]
+const TODAY = getTodayIST()
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 const P_LABEL = { whatsapp: 'WhatsApp', facebook: 'Facebook', instagram: 'Instagram' }
 const P_SHORT = { whatsapp: 'WA', facebook: 'FB', instagram: 'IG' }

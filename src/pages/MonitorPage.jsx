@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, supabaseAdmin } from '../lib/supabase'
+import { getTodayIST, daysAgoIST } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 import AgentCard from '../components/AgentCard'
@@ -11,7 +12,7 @@ function isValidLink(url) {
   return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
-const TODAY = new Date().toISOString().split('T')[0]
+const TODAY = getTodayIST()
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 
 // Determine "done" = ALL 3 platforms checked for a specific content
@@ -177,9 +178,7 @@ export default function MonitorPage() {
     if (perfData || agents.length === 0) return
     setPerfLoading(true)
     try {
-      const from = new Date()
-      from.setDate(from.getDate() - 30)
-      const fromDate = from.toISOString().split('T')[0]
+      const fromDate = daysAgoIST(30)
 
       const { data: recentContent } = await supabase
         .from('daily_content')

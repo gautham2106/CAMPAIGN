@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { getTodayIST } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 
 export default function AddContentModal({ constituencies = [], onAdded, onClose }) {
@@ -30,7 +31,7 @@ export default function AddContentModal({ constituencies = [], onAdded, onClose 
       title,
       description: description || null,
       media_link: mediaLink || null,
-      content_date: new Date().toISOString().split('T')[0],
+      content_date: getTodayIST(),
       created_by: user.id,
       target_constituencies: allConst ? null : selectedConsts,
     })

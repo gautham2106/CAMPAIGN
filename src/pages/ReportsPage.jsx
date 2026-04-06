@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { getTodayIST, daysAgoIST } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
 
@@ -12,11 +13,7 @@ const P_META = {
 
 function pct(n, d) { return d ? Math.round(n / d * 100) : 0 }
 
-function todayMinus(days) {
-  const d = new Date()
-  d.setDate(d.getDate() - days)
-  return d.toISOString().split('T')[0]
-}
+function todayMinus(days) { return daysAgoIST(days) }
 
 // ── Reusable stat card ────────────────────────────────────────────────────────
 function StatCard({ icon, label, value, sub, accent = 'indigo' }) {
@@ -118,7 +115,7 @@ export default function ReportsPage() {
   const isConstAdmin = profile?.role === 'constituency_admin'
 
   const [dateFrom, setDateFrom] = useState(todayMinus(7))
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0])
+  const [dateTo, setDateTo] = useState(getTodayIST())
   const [selConst, setSelConst] = useState(isConstAdmin ? profile.constituency_id : 'all')
   const [selContent, setSelContent] = useState('all')
 
@@ -284,7 +281,7 @@ export default function ReportsPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">To Date</label>
-            <input type="date" value={dateTo} min={dateFrom} max={new Date().toISOString().split('T')[0]}
+            <input type="date" value={dateTo} min={dateFrom} max={getTodayIST()}
               onChange={e => setDateTo(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
             />
@@ -316,9 +313,9 @@ export default function ReportsPage() {
         {/* Quick range shortcuts */}
         <div className="flex gap-2 mt-4 flex-wrap">
           {[
-            { label: 'Today', from: todayMinus(0), to: new Date().toISOString().split('T')[0] },
-            { label: 'Last 7 days', from: todayMinus(7), to: new Date().toISOString().split('T')[0] },
-            { label: 'Last 30 days', from: todayMinus(30), to: new Date().toISOString().split('T')[0] },
+            { label: 'Today', from: todayMinus(0), to: getTodayIST() },
+            { label: 'Last 7 days', from: todayMinus(7), to: getTodayIST() },
+            { label: 'Last 30 days', from: todayMinus(30), to: getTodayIST() },
           ].map(r => (
             <button key={r.label} onClick={() => { setDateFrom(r.from); setDateTo(r.to) }}
               className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
