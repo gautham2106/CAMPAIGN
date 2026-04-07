@@ -211,6 +211,7 @@ export default function SuperAdminPage() {
 
   // Field Ops tab
   const [expandedConstId, setExpandedConstId] = useState(null)
+  const [expandedMonitorId, setExpandedMonitorId] = useState(null)
 
   // Per-constituency selected content filter in dashboard drill-down
 
@@ -878,8 +879,6 @@ export default function SuperAdminPage() {
                       const mLinkIssues = mAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url)
                       const mRanges = boothAssignments.filter(b => b.monitor_id === m.id)
                       const mAssignedBooths = new Set(mAgents.map(a => a.booth_number).filter(n => n != null))
-
-                      // Vacant booths for this monitor's ranges
                       const mVacant = []
                       for (const r of mRanges) {
                         for (let n = r.booth_from; n <= r.booth_to; n++) {
@@ -887,65 +886,86 @@ export default function SuperAdminPage() {
                         }
                       }
                       const rangeLabel = mRanges.map(r => `${r.booth_from}–${r.booth_to}`).join(', ')
+                      const mIsOpen = expandedMonitorId === m.id
 
                       return (
-                        <div key={m.id} className="border-b border-gray-50 last:border-0">
-                          {/* Monitor header */}
-                          <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold text-gray-700">{m.full_name}</p>
-                              {rangeLabel && <p className="text-xs text-indigo-500 mt-0.5">Booths: {rangeLabel}</p>}
+                        <div key={m.id} className="border-b border-gray-100 last:border-0">
+                          {/* Monitor row — clickable dropdown */}
+                          <button
+                            className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                            onClick={() => setExpandedMonitorId(mIsOpen ? null : m.id)}
+                          >
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-gray-800">{m.full_name}</p>
+                              <p className="text-xs text-indigo-500 mt-0.5">
+                                {rangeLabel ? `Booths: ${rangeLabel}` : 'No booth assignment'}
+                                <span className="text-gray-400 ml-2">· {mAgents.length} agents</span>
+                              </p>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs shrink-0">
-                              {mLinkIssues.length > 0 && <span className="bg-orange-100 text-orange-700 font-semibold px-1.5 py-0.5 rounded">⚠ {mLinkIssues.length} links</span>}
-                              {mVacant.length > 0 && <span className="bg-red-100 text-red-700 font-semibold px-1.5 py-0.5 rounded">{mVacant.length} vacant</span>}
-                              <span className="text-gray-400">{mAgents.length} agents</span>
+                            <div className="flex items-center gap-1.5 text-xs shrink-0 ml-2">
+                              {mLinkIssues.length > 0 && <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">⚠ {mLinkIssues.length} links</span>}
+                              {mVacant.length > 0 && <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{mVacant.length} vacant</span>}
+                              <span className="text-gray-400 ml-1">{mIsOpen ? '▲' : '▼'}</span>
                             </div>
-                          </div>
+                          </button>
 
-                          {/* Vacant booths list */}
-                          {mVacant.length > 0 && (
-                            <div className="px-4 py-2 border-b border-gray-50">
-                              <p className="text-xs font-semibold text-red-600 mb-1">Vacant booths ({mVacant.length})</p>
-                              <div className="flex flex-wrap gap-1">
-                                {mVacant.map(n => (
-                                  <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5">#{n}</span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                          {/* Expanded detail */}
+                          {mIsOpen && (
+                            <div className="bg-gray-50 border-t border-gray-100 px-4 py-3 space-y-3">
 
-                          {/* Link issues list */}
-                          {mLinkIssues.length > 0 && (
-                            <div className="px-4 py-2 border-b border-gray-50">
-                              <p className="text-xs font-semibold text-orange-600 mb-1">Link issues ({mLinkIssues.length})</p>
-                              <div className="flex flex-wrap gap-1">
-                                {mLinkIssues.map(a => (
-                                  <span key={a.id} className="text-xs bg-orange-50 text-orange-700 border border-orange-200 rounded px-1.5 py-0.5">
-                                    {a.booth_number != null ? `#${a.booth_number} ` : ''}{a.name}
-                                    {(!a.fb_url || isValidLink(a.fb_url) === false) ? ' FB' : ''}
-                                    {(!a.ig_url || isValidLink(a.ig_url) === false) ? ' IG' : ''}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* All agents */}
-                          {mAgents.length > 0 && (
-                            <div className="px-4 py-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
-                              {mAgents.sort((a, b) => (a.booth_number ?? 0) - (b.booth_number ?? 0)).map(a => {
-                                const fbBad = isValidLink(a.fb_url) === false || !a.fb_url
-                                const igBad = isValidLink(a.ig_url) === false || !a.ig_url
-                                return (
-                                  <div key={a.id} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 ${(fbBad || igBad) ? 'bg-orange-50' : 'bg-white'}`}>
-                                    {a.booth_number != null && <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>}
-                                    <span className="text-gray-700 truncate flex-1">{a.name}</span>
-                                    <span className={fbBad ? 'text-orange-500 shrink-0' : 'text-blue-400 shrink-0'}>{fbBad ? '⚠FB' : 'FB✓'}</span>
-                                    <span className={igBad ? 'text-orange-500 shrink-0' : 'text-pink-400 shrink-0'}>{igBad ? '⚠IG' : 'IG✓'}</span>
+                              {/* Vacant booths */}
+                              {mVacant.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-bold text-red-600 mb-1.5">Vacant booths ({mVacant.length})</p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {mVacant.map(n => (
+                                      <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">#{n}</span>
+                                    ))}
                                   </div>
-                                )
-                              })}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-green-600 font-medium">✓ All booths assigned</p>
+                              )}
+
+                              {/* Link issues */}
+                              {mLinkIssues.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-bold text-orange-600 mb-1.5">Link issues ({mLinkIssues.length})</p>
+                                  <div className="space-y-1">
+                                    {mLinkIssues.map(a => (
+                                      <div key={a.id} className="flex items-center gap-2 text-xs bg-orange-50 border border-orange-100 rounded-lg px-2.5 py-1.5">
+                                        {a.booth_number != null && <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>}
+                                        <span className="text-gray-800 flex-1 truncate">{a.name}</span>
+                                        <div className="flex gap-1 shrink-0">
+                                          {(!a.fb_url || isValidLink(a.fb_url) === false) && <span className="bg-blue-100 text-blue-700 px-1 rounded font-semibold">FB</span>}
+                                          {(!a.ig_url || isValidLink(a.ig_url) === false) && <span className="bg-pink-100 text-pink-700 px-1 rounded font-semibold">IG</span>}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* All agents compact list */}
+                              {mAgents.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-bold text-gray-500 mb-1.5">All agents</p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                    {mAgents.sort((a, b) => (a.booth_number ?? 0) - (b.booth_number ?? 0)).map(a => {
+                                      const fbBad = isValidLink(a.fb_url) === false || !a.fb_url
+                                      const igBad = isValidLink(a.ig_url) === false || !a.ig_url
+                                      return (
+                                        <div key={a.id} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 ${(fbBad || igBad) ? 'bg-orange-50' : 'bg-white border border-gray-100'}`}>
+                                          {a.booth_number != null && <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>}
+                                          <span className="text-gray-700 truncate flex-1">{a.name}</span>
+                                          <span className={fbBad ? 'text-orange-500 shrink-0' : 'text-blue-400 shrink-0'}>{fbBad ? '⚠FB' : 'FB✓'}</span>
+                                          <span className={igBad ? 'text-orange-500 shrink-0' : 'text-pink-400 shrink-0'}>{igBad ? '⚠IG' : 'IG✓'}</span>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
