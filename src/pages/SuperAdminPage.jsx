@@ -199,7 +199,7 @@ export default function SuperAdminPage() {
   const [allContent, setAllContent] = useState([]) // recent content for calendar
 
   // Compliance stats indexed: { [agent_id]: { [content_id]: { [platform]: is_checked } } }
-  const [complianceStats, setComplianceStats] = useState({})
+  const [logMap, setLogMap] = useState({})
 
   const [loading, setLoading] = useState(true)
   const [showAddContent, setShowAddContent] = useState(false)
@@ -243,8 +243,7 @@ export default function SuperAdminPage() {
       ])
       if (constRes.error) throw constRes.error
 
-      console.log('[SuperAdmin] loadBase — agents:', agentsRes.data?.length ?? 0, '| monitors:', monitorsRes.data?.length ?? 0, '| agents error:', agentsRes.error?.message)
-      setConstituencies(constRes.data ?? [])
+setConstituencies(constRes.data ?? [])
       setAllAgents(agentsRes.data ?? [])
       setAllMonitors(monitorsRes.data ?? [])
       setConstAdmins(adminsRes.data ?? [])
@@ -261,33 +260,30 @@ export default function SuperAdminPage() {
   async function loadDateCompliance() {
     setError('')
     try {
-      const client = supabaseAdmin ?? supabase
-      console.log('[SuperAdmin] loadDateCompliance — date:', selectedDate, '| allAgents:', allAgents.length, '| usingAdmin:', !!supabaseAdmin)
-      const { data: dc, error: dcErr } = await client
+      const { data: dc, error: ce } = await supabase
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
         .order('created_at')
-      console.log('[SuperAdmin] daily_content rows:', dc?.length ?? 0, dcErr ? '| ERROR:' + dcErr.message : '')
+      if (ce) throw ce
       setDateContents(dc ?? [])
 
-      if (!dc?.length || !allAgents.length) { setComplianceStats({}); return }
+      if (!dc?.length || !allAgents.length) { setLogMap({}); return }
 
-      const { data: logs, error: logsErr } = await client
+      const { data: logs, error: le } = await supabase
         .from('compliance_logs')
-        .select('agent_id, content_id, platform, is_checked')
+        .select('*')
         .in('content_id', dc.map(c => c.id))
         .in('agent_id', allAgents.map(a => a.id))
-      console.log('[SuperAdmin] compliance_logs rows:', logs?.length ?? 0, logsErr ? '| ERROR:' + logsErr.message : '')
+      if (le) throw le
 
-      const stats = {}
+      const map = {}
       for (const log of logs ?? []) {
-        if (!stats[log.agent_id]) stats[log.agent_id] = {}
-        if (!stats[log.agent_id][log.content_id]) stats[log.agent_id][log.content_id] = {}
-        stats[log.agent_id][log.content_id][log.platform] = log.is_checked
+        if (!map[log.agent_id]) map[log.agent_id] = {}
+        if (!map[log.agent_id][log.content_id]) map[log.agent_id][log.content_id] = {}
+        map[log.agent_id][log.content_id][log.platform] = log
       }
-      console.log('[SuperAdmin] complianceStats agents:', Object.keys(stats).length)
-      setComplianceStats(stats)
+      setLogMap(map)
     } catch (e) {
       setError(e.message)
     }
@@ -311,7 +307,7 @@ export default function SuperAdminPage() {
       let agentFullyDone = true
       for (const cid of contentIds) {
         for (const p of PLATFORMS) {
-          if (complianceStats[aid]?.[cid]?.[p]) platformChecked[p]++
+          if (logMap[aid]?.[cid]?.[p]?.is_checked === true) platformChecked[p]++
           else agentFullyDone = false
         }
       }
@@ -482,8 +478,8 @@ export default function SuperAdminPage() {
 
           {/* Debug info — remove after fixing */}
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs font-mono text-yellow-800 space-y-0.5">
-            <p>🔍 Debug: agents={allAgents.length} | content={dateContents.length} | logs={Object.keys(complianceStats).length} agents with logs | adminClient={supabaseAdmin ? 'YES' : 'NO (using anon)'}</p>
-            <p>complianceStats keys: {JSON.stringify(Object.keys(complianceStats).slice(0, 3))}...</p>
+            <p>🔍 Debug: agents={allAgents.length} | content={dateContents.length} | logs={Object.keys(logMap).length} agents with logs | adminClient={supabaseAdmin ? 'YES' : 'NO (using anon)'}</p>
+            <p>logMap keys: {JSON.stringify(Object.keys(logMap).slice(0, 3))}...</p>
           </div>
 
           {/* Overall platform summary */}
