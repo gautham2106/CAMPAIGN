@@ -477,8 +477,17 @@ setConstituencies(constRes.data ?? [])
 
           {/* Debug info — remove after fixing */}
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs font-mono text-yellow-800 space-y-0.5">
-            <p>🔍 Debug: agents={allAgents.length} | content={dateContents.length} | logs={Object.keys(logMap).length} agents with logs | adminClient={supabaseAdmin ? 'YES' : 'NO (using anon)'}</p>
-            <p>logMap keys: {JSON.stringify(Object.keys(logMap).slice(0, 3))}...</p>
+            <p>🔍 agents={allAgents.length} | content={dateContents.length} | logs={Object.keys(logMap).length} agents with logs</p>
+            {(() => {
+              const firstAgentId = Object.keys(logMap)[0]
+              const firstAgentInAllAgents = firstAgentId ? allAgents.some(a => a.id === firstAgentId) : null
+              const firstContentId = dateContents[0]?.id
+              const sample = firstAgentId && firstContentId ? logMap[firstAgentId]?.[firstContentId] : null
+              return <>
+                <p>logMap[0] in allAgents: {String(firstAgentInAllAgents)} | dateContents[0].id: {firstContentId?.slice(0,8)}...</p>
+                <p>sample platforms: {JSON.stringify(sample ? Object.keys(sample) : null)} | is_checked values: {JSON.stringify(sample ? Object.values(sample).map(l => l?.is_checked) : null)}</p>
+              </>
+            })()}
           </div>
 
           {/* Overall platform summary */}
