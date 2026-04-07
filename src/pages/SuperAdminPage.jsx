@@ -212,6 +212,9 @@ export default function SuperAdminPage() {
   // Field Ops tab
   const [expandedConstId, setExpandedConstId] = useState(null)
 
+  // Per-constituency selected content filter in dashboard drill-down
+  const [constContentFilters, setConstContentFilters] = useState({}) // { [constId]: contentId | null }
+
   // Constituency rename/delete
   const [editingConstId, setEditingConstId] = useState(null)
   const [editConstName, setEditConstName] = useState('')
@@ -283,15 +286,17 @@ export default function SuperAdminPage() {
     }
   }
 
-  // Compute stats for a set of agent IDs on selectedDate
-  function computeStats(agentIds) {
-    const contentIds = dateContents.map(c => c.id)
+  // Compute stats for a set of agent IDs on selectedDate, optionally filtered to one content
+  function computeStats(agentIds, filterContentId = null) {
+    const contentIds = filterContentId
+      ? (dateContents.find(c => c.id === filterContentId) ? [filterContentId] : [])
+      : dateContents.map(c => c.id)
     const total = agentIds.length
     const contentCount = contentIds.length
 
     if (!total || !contentCount) return { total, done: 0, donePct: 0, platform: { whatsapp: 0, facebook: 0, instagram: 0 }, overall: 0 }
 
-    const opportunities = total * contentCount // per platform
+    const opportunities = total * contentCount
     const platformChecked = { whatsapp: 0, facebook: 0, instagram: 0 }
     let done = 0
 
@@ -463,7 +468,7 @@ export default function SuperAdminPage() {
             </button>
             {showCalendar && (
               <div className="mt-2 max-w-sm">
-                <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false) }} markedDates={allContentDates} />
+                <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false); setConstContentFilters({}) }} markedDates={allContentDates} />
               </div>
             )}
           </div>
@@ -540,41 +545,99 @@ export default function SuperAdminPage() {
                           </div>
                         )}
                       </button>
-                      {/* Expanded: monitor drill-down */}
-                      {isExpanded && (
-                        <div className="border-t border-gray-100 bg-gray-50 divide-y divide-gray-100">
-                          {cMonitors.length === 0 ? (
-                            <p className="px-6 py-3 text-xs text-gray-400">No monitors assigned.</p>
-                          ) : (
-                            [...cMonitors]
-                              .map(m => ({ m, ms: computeStats(allAgents.filter(a => a.assigned_monitor_id === m.id).map(a => a.id)) }))
-                              .sort((a, b) => a.ms.donePct - b.ms.donePct)
-                              .map(({ m, ms }) => {
-                                const phone = m.phone?.replace(/\D/g, '') || ''
-                                const mStatusColor = ms.donePct === 100 ? 'text-green-600' : ms.donePct > 50 ? 'text-yellow-600' : ms.total > 0 ? 'text-red-500' : 'text-gray-400'
-                                return (
-                                  <div key={m.id} className="px-6 py-3 flex items-center gap-3">
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium text-gray-800">{m.full_name}</p>
-                                      <p className="text-xs text-gray-400">{ms.done}/{ms.total} agents done</p>
-                                    </div>
-                                    <span className={`text-base font-bold ${mStatusColor}`}>
-                                      {ms.total > 0 ? `${ms.donePct}%` : '—'}
-                                    </span>
-                                    {phone && ms.donePct < 80 && (
-                                      <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
-                                        target="_blank" rel="noopener noreferrer"
-                                        title="WhatsApp this monitor"
-                                        className="shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1 rounded-lg">
-                                        💬
-                                      </a>
-                                    )}
-                                  </div>
-                                )
-                              })
-                          )}
-                        </div>
-                      )}
+                      {/* Expanded: content filter + monitor drill-down */}
+                      {isExpanded && (() => {
+                        const selectedCid = constContentFilters[c.id] ?? null
+                        const setSelectedCid = (cid) => setConstContentFilters(prev => ({ ...prev, [c.id]: cid }))
+                        return (
+                          <div className="border-t border-gray-100 bg-gray-50">
+                            {/* Content chips */}
+                            {dateContents.length > 0 && (
+                              <div className="px-4 pt-3 pb-2 flex gap-2 overflow-x-auto">
+                                <button
+                                  onClick={() => setSelectedCid(null)}
+                                  className={`shrink-0 px-3 py-1 rounded-lg text-xs font-semibold border transition-colors ${
+                                    selectedCid === null
+                                      ? 'bg-zinc-900 text-white border-zinc-900'
+                                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                                  }`}
+                                >
+                                  All ({dateContents.length})
+                                </button>
+                                {dateContents.map((dc, i) => (
+                                  <button
+                                    key={dc.id}
+                                    onClick={() => setSelectedCid(selectedCid === dc.id ? null : dc.id)}
+                                    title={dc.title}
+                                    className={`shrink-0 px-3 py-1 rounded-lg text-xs font-semibold border transition-colors max-w-[150px] truncate ${
+                                      selectedCid === dc.id
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                                    }`}
+                                  >
+                                    {i + 1}. {dc.title.length > 16 ? dc.title.slice(0, 16) + '…' : dc.title}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {dateContents.length === 0 && (
+                              <p className="px-6 py-2 text-xs text-gray-400">No content on this date.</p>
+                            )}
+                            {/* Monitor rows */}
+                            <div className="divide-y divide-gray-100">
+                              {cMonitors.length === 0 ? (
+                                <p className="px-6 py-3 text-xs text-gray-400">No monitors assigned.</p>
+                              ) : (
+                                [...cMonitors]
+                                  .map(m => ({ m, ms: computeStats(allAgents.filter(a => a.assigned_monitor_id === m.id).map(a => a.id), selectedCid) }))
+                                  .sort((a, b) => a.ms.donePct - b.ms.donePct)
+                                  .map(({ m, ms }) => {
+                                    const phone = m.phone?.replace(/\D/g, '') || ''
+                                    const mStatusColor = ms.donePct === 100 ? 'text-green-600' : ms.donePct > 50 ? 'text-yellow-600' : ms.total > 0 ? 'text-red-500' : 'text-gray-400'
+                                    const mBg = ms.donePct === 0 && ms.total > 0 ? 'bg-red-50' : ''
+                                    return (
+                                      <div key={m.id} className={`px-6 py-3 flex items-center gap-3 ${mBg}`}>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-medium text-gray-800">{m.full_name}</p>
+                                          <p className="text-xs text-gray-400">
+                                            {ms.done}/{ms.total} agents done
+                                            {selectedCid && (
+                                              <span className="ml-1 text-indigo-500">· {dateContents.find(d => d.id === selectedCid)?.title.slice(0, 14)}</span>
+                                            )}
+                                          </p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                          <span className={`text-base font-bold ${mStatusColor}`}>
+                                            {ms.total > 0 ? `${ms.donePct}%` : '—'}
+                                          </span>
+                                          {ms.total > 0 && (
+                                            <div className="flex gap-1 mt-0.5 justify-end">
+                                              {PLATFORMS.map(p => (
+                                                <span key={p} className={`text-xs px-1 py-0 rounded font-bold ${
+                                                  (ms.platform[p] ?? 0) >= 80 ? 'bg-green-100 text-green-700' :
+                                                  (ms.platform[p] ?? 0) >= 50 ? 'bg-yellow-100 text-yellow-700' :
+                                                  'bg-red-100 text-red-600'
+                                                }`}>{P_SHORT[p]}</span>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                        {phone && ms.donePct < 80 && ms.total > 0 && (
+                                          <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
+                                            target="_blank" rel="noopener noreferrer"
+                                            title="WhatsApp this monitor"
+                                            className="shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1 rounded-lg">
+                                            💬
+                                          </a>
+                                        )}
+                                      </div>
+                                    )
+                                  })
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })}
