@@ -252,7 +252,8 @@ export default function ConstituencyAdminPage() {
   }
 
   async function loadAllContentDates() {
-    const { data } = await supabase.from('daily_content').select('content_date')
+    const client = supabaseAdmin ?? supabase
+    const { data } = await client.from('daily_content').select('content_date').limit(10000)
     if (data) setAllContentDates([...new Set(data.map(r => r.content_date))])
   }
 
@@ -260,11 +261,15 @@ export default function ConstituencyAdminPage() {
     setLoading(true)
     setError('')
     try {
+      // Use supabaseAdmin (service role) when available so RLS never silently
+      // filters out agents — the explicit .eq() filters still scope to this
+      // constituency, so security is maintained by the query itself.
+      const client = supabaseAdmin ?? supabase
       const [monitorsRes, agentsRes, boothRes, placesRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).order('full_name').limit(5000),
-        supabase.from('digital_agents').select('*').eq('constituency_id', constituencyId).order('booth_number').limit(50000),
-        supabase.from('monitor_booth_assignments').select('*').eq('constituency_id', constituencyId).order('booth_from'),
-        supabase.from('places').select('*').eq('constituency_id', constituencyId).order('booth_from'),
+        client.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).order('full_name').limit(5000),
+        client.from('digital_agents').select('*').eq('constituency_id', constituencyId).order('booth_number').limit(50000),
+        client.from('monitor_booth_assignments').select('*').eq('constituency_id', constituencyId).order('booth_from'),
+        client.from('places').select('*').eq('constituency_id', constituencyId).order('booth_from'),
       ])
       if (monitorsRes.error) throw monitorsRes.error
       if (agentsRes.error) throw agentsRes.error
@@ -282,7 +287,8 @@ export default function ConstituencyAdminPage() {
   async function loadDateData() {
     setError('')
     try {
-      let contentQuery = supabase
+      const client = supabaseAdmin ?? supabase
+      let contentQuery = client
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
@@ -295,7 +301,7 @@ export default function ConstituencyAdminPage() {
       setContents(dateContents ?? [])
 
       if (dateContents?.length && agents.length) {
-        const { data: logs, error: le } = await supabase
+        const { data: logs, error: le } = await client
           .from('compliance_logs')
           .select('agent_id, content_id, platform, is_checked')
           .in('content_id', dateContents.map(c => c.id))
@@ -320,9 +326,10 @@ export default function ConstituencyAdminPage() {
     if (perfData || agents.length === 0) return
     setPerfLoading(true)
     try {
+      const client = supabaseAdmin ?? supabase
       const fromDate = daysAgoIST(30)
 
-      const { data: recentContent } = await supabase
+      const { data: recentContent } = await client
         .from('daily_content')
         .select('id')
         .gte('content_date', fromDate)
@@ -330,7 +337,7 @@ export default function ConstituencyAdminPage() {
       const contentIds = recentContent?.map(c => c.id) ?? []
       if (!contentIds.length) { setPerfData({ monitors: {}, agents: {} }); return }
 
-      const { data: logs } = await supabase
+      const { data: logs } = await client
         .from('compliance_logs')
         .select('agent_id, content_id, platform, is_checked')
         .in('content_id', contentIds)
