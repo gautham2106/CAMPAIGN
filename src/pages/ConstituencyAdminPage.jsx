@@ -188,6 +188,7 @@ export default function ConstituencyAdminPage() {
   const [perfData, setPerfData] = useState(null)
   const [perfLoading, setPerfLoading] = useState(false)
   const [showPerf, setShowPerf] = useState(false)
+  const [overviewContentId, setOverviewContentId] = useState(null) // null = All contents
 
   // CRUD state
   const [showAddAgent, setShowAddAgent] = useState(false)
@@ -357,10 +358,12 @@ export default function ConstituencyAdminPage() {
     }
   }
 
-  // Per-monitor stats for selected date
-  function getMonitorStats(monitorId) {
+  // Per-monitor stats for selected date + optional content filter
+  function getMonitorStats(monitorId, filterContentId = null) {
     const mAgents = agents.filter(a => a.assigned_monitor_id === monitorId)
-    const contentIds = contents.map(c => c.id)
+    const contentIds = filterContentId
+      ? [filterContentId]
+      : contents.map(c => c.id)
     const total = mAgents.length
 
     if (!total || !contentIds.length) return { total, done: 0, platformPct: {} }
@@ -783,7 +786,7 @@ export default function ConstituencyAdminPage() {
               <div className="mt-2 max-w-sm">
                 <MiniCalendar
                   value={selectedDate}
-                  onChange={d => { setSelectedDate(d); setShowCalendar(false) }}
+                  onChange={d => { setSelectedDate(d); setShowCalendar(false); setOverviewContentId(null) }}
                   markedDates={allContentDates}
                 />
               </div>
@@ -796,14 +799,44 @@ export default function ConstituencyAdminPage() {
             </div>
           ) : (
             <>
+              {/* Content selector — "All" + one chip per content */}
+              {contents.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-0.5 px-0.5">
+                  <button
+                    onClick={() => setOverviewContentId(null)}
+                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                      overviewContentId === null
+                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    All ({contents.length})
+                  </button>
+                  {contents.map((c, i) => (
+                    <button
+                      key={c.id}
+                      onClick={() => setOverviewContentId(c.id)}
+                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors max-w-[160px] truncate ${
+                        overviewContentId === c.id
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                      }`}
+                      title={c.title}
+                    >
+                      {i + 1}. {c.title.length > 18 ? c.title.slice(0, 18) + '…' : c.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Alert banner for lagging monitors */}
               {(() => {
                 const lagging = monitors.filter(m => {
-                  const s = getMonitorStats(m.id)
+                  const s = getMonitorStats(m.id, overviewContentId)
                   return s.total > 0 && s.donePct === 0
                 })
                 const behind = monitors.filter(m => {
-                  const s = getMonitorStats(m.id)
+                  const s = getMonitorStats(m.id, overviewContentId)
                   return s.total > 0 && s.donePct > 0 && s.donePct < 50
                 })
                 if (!lagging.length && !behind.length) return null
@@ -825,14 +858,20 @@ export default function ConstituencyAdminPage() {
 
               {/* Monitor performance cards — sorted worst first */}
               <div>
-                <h3 className="font-bold text-gray-900 mb-3">Monitor Performance</h3>
+                <h3 className="font-bold text-gray-900 mb-1">Monitor Performance</h3>
+                {overviewContentId && (
+                  <p className="text-xs text-indigo-600 font-medium mb-3">
+                    Filtered: {contents.find(c => c.id === overviewContentId)?.title}
+                  </p>
+                )}
                 <div className="space-y-3">
                   {[...monitors]
-                    .map(m => ({ m, stats: getMonitorStats(m.id) }))
+                    .map(m => ({ m, stats: getMonitorStats(m.id, overviewContentId) }))
                     .sort((a, b) => a.stats.donePct - b.stats.donePct)
                     .map(({ m, stats }) => {
                     const statusColor = stats.donePct === 100 ? 'border-green-200 bg-green-50' : stats.donePct > 50 ? 'border-yellow-200 bg-yellow-50' : stats.total > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'
                     const phone = m.phone?.replace(/\D/g, '') || ''
+                    const mAgents = agents.filter(a => a.assigned_monitor_id === m.id)
 
                     return (
                       <div key={m.id} className={`bg-white rounded-xl border p-4 ${statusColor}`}>
@@ -842,7 +881,6 @@ export default function ConstituencyAdminPage() {
                             <p className="text-xs text-gray-500">{stats.total} agents</p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {/* WA remind button for lagging monitors */}
                             {phone && stats.total > 0 && stats.donePct < 80 && (
                               <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
                                 target="_blank" rel="noopener noreferrer"
@@ -876,21 +914,31 @@ export default function ConstituencyAdminPage() {
                           </div>
                         )}
 
-                        {/* Content breakdown */}
-                        {contents.length > 1 && (
+                        {/* Per-content breakdown — all contents shown, selected one highlighted */}
+                        {contents.length > 0 && stats.total > 0 && (
                           <div className="flex gap-2 mt-3 flex-wrap">
                             {contents.map(c => {
-                              const mAgents = agents.filter(a => a.assigned_monitor_id === m.id)
                               const doneCnt = mAgents.filter(a =>
                                 PLATFORMS.every(p => logMap[a.id]?.[c.id]?.[p]?.is_checked)
                               ).length
+                              const isSelected = overviewContentId === c.id
+                              const allDone = doneCnt === mAgents.length
                               return (
-                                <span key={c.id} className="text-xs bg-white border border-gray-200 rounded-lg px-2 py-1">
-                                  <span className="text-gray-500">{c.title.slice(0, 12)}{c.title.length > 12 ? '…' : ''}: </span>
-                                  <span className={`font-bold ${doneCnt === mAgents.length ? 'text-green-600' : 'text-gray-700'}`}>
-                                    {doneCnt}/{mAgents.length}
-                                  </span>
-                                </span>
+                                <button
+                                  key={c.id}
+                                  onClick={() => setOverviewContentId(overviewContentId === c.id ? null : c.id)}
+                                  title={c.title}
+                                  className={`text-xs rounded-lg px-2 py-1 border transition-colors ${
+                                    isSelected
+                                      ? 'bg-indigo-600 text-white border-indigo-600'
+                                      : allDone
+                                      ? 'bg-green-50 border-green-200 text-green-700'
+                                      : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
+                                  }`}
+                                >
+                                  <span className="opacity-70">{c.title.slice(0, 10)}{c.title.length > 10 ? '…' : ''} </span>
+                                  <span className="font-bold">{doneCnt}/{mAgents.length}</span>
+                                </button>
                               )
                             })}
                           </div>
@@ -899,8 +947,8 @@ export default function ConstituencyAdminPage() {
                         <button
                           onClick={() => setDrillMonitor({
                             monitor: m,
-                            agents: agents.filter(a => a.assigned_monitor_id === m.id),
-                            contentIds: contents.map(c => c.id),
+                            agents: mAgents,
+                            contentIds: overviewContentId ? [overviewContentId] : contents.map(c => c.id),
                           })}
                           className="mt-3 text-xs text-indigo-600 font-medium hover:underline"
                         >
