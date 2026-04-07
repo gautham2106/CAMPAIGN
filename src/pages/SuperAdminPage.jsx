@@ -232,13 +232,14 @@ export default function SuperAdminPage() {
     setLoading(true)
     setError('')
     try {
+      const client = supabaseAdmin ?? supabase
       const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes] = await Promise.all([
-        supabase.from('constituencies').select('*').order('name'),
-        supabase.from('digital_agents').select('*'),
-        supabase.from('profiles').select('id, full_name, email, constituency_id').eq('role', 'monitor'),
-        supabase.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin'),
-        supabase.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
-        supabase.from('daily_content').select('content_date'),
+        client.from('constituencies').select('*').order('name'),
+        client.from('digital_agents').select('*'),
+        client.from('profiles').select('id, full_name, email, constituency_id').eq('role', 'monitor'),
+        client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin'),
+        client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
+        client.from('daily_content').select('content_date'),
       ])
       if (constRes.error) throw constRes.error
 
@@ -259,7 +260,8 @@ export default function SuperAdminPage() {
   async function loadDateCompliance() {
     setError('')
     try {
-      const { data: dc } = await supabase
+      const client = supabaseAdmin ?? supabase
+      const { data: dc } = await client
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
@@ -268,7 +270,7 @@ export default function SuperAdminPage() {
 
       if (!dc?.length || !allAgents.length) { setComplianceStats({}); return }
 
-      const { data: logs } = await supabase
+      const { data: logs } = await client
         .from('compliance_logs')
         .select('agent_id, content_id, platform, is_checked')
         .in('content_id', dc.map(c => c.id))
