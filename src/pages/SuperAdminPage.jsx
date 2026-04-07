@@ -481,58 +481,79 @@ setConstituencies(constRes.data ?? [])
           ) : (
             <div className="space-y-4">
               {dateContents.map((content, ci) => {
-                // Per-constituency stats for this content item
-                const rows = constituencies.map(c => {
+                // Only show constituencies targeted by this content (null = all)
+                const targetedIds = content.target_constituencies ?? null
+                const relevantConsts = targetedIds
+                  ? constituencies.filter(c => targetedIds.includes(c.id))
+                  : constituencies
+
+                // Per-constituency, per-platform counts
+                const rows = relevantConsts.map(c => {
                   const cAgents = allAgents.filter(a => a.constituency_id === c.id)
                   const total = cAgents.length
-                  let done = 0
-                  for (const a of cAgents) {
-                    if (PLATFORMS.every(p => logMap[a.id]?.[content.id]?.[p]?.is_checked)) done++
+                  if (!total) return null
+                  const platformDone = {}
+                  for (const p of PLATFORMS) {
+                    platformDone[p] = cAgents.filter(a => logMap[a.id]?.[content.id]?.[p]?.is_checked).length
                   }
-                  return { c, total, done, pct: pct(done, total) }
-                }).filter(r => r.total > 0)
+                  const allDone = cAgents.filter(a =>
+                    PLATFORMS.every(p => logMap[a.id]?.[content.id]?.[p]?.is_checked)
+                  ).length
+                  return { c, total, allDone, platformDone }
+                }).filter(Boolean)
 
                 const grandTotal = rows.reduce((s, r) => s + r.total, 0)
-                const grandDone  = rows.reduce((s, r) => s + r.done, 0)
-                const grandPct   = pct(grandDone, grandTotal)
 
                 return (
                   <div key={content.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     {/* Content header */}
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="shrink-0 bg-indigo-100 text-indigo-700 font-bold text-xs px-2 py-0.5 rounded-full">
-                          {ci + 1}
-                        </span>
-                        <p className="font-semibold text-gray-900 truncate">{content.title}</p>
-                      </div>
-                      <div className="shrink-0 flex items-center gap-2">
-                        <span className="text-xs text-gray-400">{grandDone}/{grandTotal} agents</span>
-                        <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full ${
-                          grandPct === 100 ? 'bg-green-100 text-green-700' :
-                          grandPct >= 50  ? 'bg-yellow-100 text-yellow-700' :
-                          grandPct > 0    ? 'bg-red-100 text-red-600' :
-                          'bg-gray-100 text-gray-400'
-                        }`}>{grandPct}%</span>
-                      </div>
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+                      <span className="shrink-0 bg-indigo-100 text-indigo-700 font-bold text-xs px-2 py-0.5 rounded-full">{ci + 1}</span>
+                      <p className="font-semibold text-gray-900 flex-1 truncate">{content.title}</p>
+                      <span className="text-xs text-gray-400 shrink-0">{grandTotal} agents</span>
                     </div>
+
+                    {/* Column headers */}
+                    {rows.length > 0 && (
+                      <div className="flex items-center gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                        <span className="flex-1">Constituency</span>
+                        <span className="w-14 text-center text-green-600">WA</span>
+                        <span className="w-14 text-center text-blue-600">FB</span>
+                        <span className="w-14 text-center text-pink-600">IG</span>
+                        <span className="w-14 text-center text-gray-500">All ✓</span>
+                      </div>
+                    )}
+
                     {/* Constituency rows */}
                     <div className="divide-y divide-gray-50">
                       {rows.length === 0 ? (
-                        <p className="px-4 py-3 text-xs text-gray-400">No agents in any constituency.</p>
-                      ) : rows.map(({ c, total, done, pct: p }) => (
-                        <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
-                          <p className="flex-1 text-sm text-gray-800 truncate">{c.name}</p>
-                          <p className="text-xs text-gray-400 shrink-0">{done}/{total}</p>
-                          <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden shrink-0">
-                            <div
-                              className={`h-full rounded-full ${p === 100 ? 'bg-green-500' : p >= 50 ? 'bg-yellow-400' : p > 0 ? 'bg-red-400' : 'bg-gray-200'}`}
-                              style={{ width: `${p}%` }}
-                            />
+                        <p className="px-4 py-3 text-xs text-gray-400">No agents targeted.</p>
+                      ) : rows.map(({ c, total, allDone, platformDone }) => (
+                        <div key={c.id} className="flex items-center gap-2 px-4 py-2.5">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-800 truncate">{c.name}</p>
+                            <p className="text-xs text-gray-400">{total} agents</p>
                           </div>
-                          <span className={`text-xs font-bold w-9 text-right shrink-0 ${
-                            p === 100 ? 'text-green-700' : p >= 50 ? 'text-yellow-700' : p > 0 ? 'text-red-600' : 'text-gray-400'
-                          }`}>{p}%</span>
+                          {PLATFORMS.map((p, pi) => {
+                            const done = platformDone[p]
+                            const pc = pct(done, total)
+                            const color = pc === 100 ? 'text-green-700 bg-green-50' : pc >= 50 ? 'text-yellow-700 bg-yellow-50' : pc > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
+                            const label = [null, 'text-green-600', 'text-blue-600', 'text-pink-600'][pi + 1]
+                            return (
+                              <div key={p} className={`w-14 text-center rounded-lg py-1 ${color}`}>
+                                <p className="text-xs font-bold">{pc}%</p>
+                                <p className="text-xs">{done}/{total}</p>
+                              </div>
+                            )
+                          })}
+                          <div className={`w-14 text-center rounded-lg py-1 ${
+                            pct(allDone, total) === 100 ? 'text-green-700 bg-green-50' :
+                            pct(allDone, total) >= 50 ? 'text-yellow-700 bg-yellow-50' :
+                            allDone > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
+                          }`}>
+                            <p className="text-xs font-bold">{pct(allDone, total)}%</p>
+                            <p className="text-xs">{allDone}/{total}</p>
+                          </div>
                         </div>
                       ))}
                     </div>
