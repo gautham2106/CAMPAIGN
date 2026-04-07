@@ -163,6 +163,7 @@ export default function ConstituencyAdminPage() {
   const [monitors, setMonitors] = useState([])
   const [agents, setAgents] = useState([])
   const [boothAssignments, setBoothAssignments] = useState([])
+  const [places, setPlaces] = useState([])
 
   // Booths tab — spreadsheet table rows
   const [tableRows, setTableRows] = useState([])   // { _key, id, monitor_id, booth_from, booth_to, _dirty, _saving }
@@ -238,6 +239,18 @@ export default function ConstituencyAdminPage() {
     })))
   }, [boothAssignments])
 
+  // Returns place names for a monitor based on their booth assignment ranges
+  function getMonitorPlaces(monitorId) {
+    const ranges = boothAssignments.filter(b => b.monitor_id === monitorId)
+    const matched = new Set()
+    for (const r of ranges) {
+      for (const p of places) {
+        if (r.booth_from <= p.booth_to && r.booth_to >= p.booth_from) matched.add(p.name)
+      }
+    }
+    return [...matched]
+  }
+
   async function loadAllContentDates() {
     const { data } = await supabase.from('daily_content').select('content_date')
     if (data) setAllContentDates([...new Set(data.map(r => r.content_date))])
@@ -247,16 +260,18 @@ export default function ConstituencyAdminPage() {
     setLoading(true)
     setError('')
     try {
-      const [monitorsRes, agentsRes, boothRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).order('full_name'),
-        supabase.from('digital_agents').select('*').eq('constituency_id', constituencyId).order('booth_number'),
+      const [monitorsRes, agentsRes, boothRes, placesRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).order('full_name').limit(5000),
+        supabase.from('digital_agents').select('*').eq('constituency_id', constituencyId).order('booth_number').limit(50000),
         supabase.from('monitor_booth_assignments').select('*').eq('constituency_id', constituencyId).order('booth_from'),
+        supabase.from('places').select('*').eq('constituency_id', constituencyId).order('booth_from'),
       ])
       if (monitorsRes.error) throw monitorsRes.error
       if (agentsRes.error) throw agentsRes.error
       setMonitors(monitorsRes.data ?? [])
       setAgents(agentsRes.data ?? [])
       setBoothAssignments(boothRes.data ?? [])
+      setPlaces(placesRes.data ?? [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -282,9 +297,9 @@ export default function ConstituencyAdminPage() {
       if (dateContents?.length && agents.length) {
         const { data: logs, error: le } = await supabase
           .from('compliance_logs')
-          .select('*')
+          .select('agent_id, content_id, platform, is_checked')
           .in('content_id', dateContents.map(c => c.id))
-          .in('agent_id', agents.map(a => a.id))
+          .limit(100000)
         if (le) throw le
         const map = {}
         for (const log of logs ?? []) {
@@ -319,8 +334,8 @@ export default function ConstituencyAdminPage() {
         .from('compliance_logs')
         .select('agent_id, content_id, platform, is_checked')
         .in('content_id', contentIds)
-        .in('agent_id', agents.map(a => a.id))
         .eq('is_checked', true)
+        .limit(200000)
 
       // Per agent: count fully posted content (all 3 checked)
       const agentMap = {} // { [agent_id]: { [content_id]: platform_count } }
@@ -878,6 +893,7 @@ export default function ConstituencyAdminPage() {
                         <div className="flex items-start justify-between mb-3 gap-3">
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-gray-900">{m.full_name}</p>
+                            {(() => { const ps = getMonitorPlaces(m.id); return ps.length > 0 && <p className="text-xs text-indigo-500 mt-0.5">{ps.join(' · ')}</p> })()}
                             <p className="text-xs text-gray-500">{stats.total} agents</p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -985,7 +1001,10 @@ export default function ConstituencyAdminPage() {
                           return (
                             <div key={m.id} className="bg-white rounded-xl border border-gray-200 p-4">
                               <div className="flex items-center justify-between mb-3">
-                                <p className="font-semibold text-gray-900">{m.full_name}</p>
+                                <div>
+                                  <p className="font-semibold text-gray-900">{m.full_name}</p>
+                                  {(() => { const ps = getMonitorPlaces(m.id); return ps.length > 0 && <p className="text-xs text-indigo-500">{ps.join(' · ')}</p> })()}
+                                </div>
                                 <span className={`text-sm font-bold px-2 py-0.5 rounded-full ${
                                   mp.avg >= 80 ? 'bg-green-100 text-green-700' : mp.avg >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'
                                 }`}>

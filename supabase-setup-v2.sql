@@ -409,6 +409,44 @@ GROUP BY
 GRANT SELECT ON constituency_content_stats TO authenticated;
 
 -- ============================================================
+-- TABLE: places
+-- Booth-range to place name mapping per constituency.
+-- One constituency can have many place entries (each with booth_from/booth_to).
+-- A monitor may cover booths spanning multiple places.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS places (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  constituency_id UUID REFERENCES constituencies(id) ON DELETE CASCADE NOT NULL,
+  name            TEXT NOT NULL,
+  booth_from      INTEGER NOT NULL,
+  booth_to        INTEGER NOT NULL,
+  created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_places_constituency ON places(constituency_id);
+
+ALTER TABLE places ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Super admin full access places" ON places;
+CREATE POLICY "Super admin full access places"
+  ON places FOR ALL TO authenticated
+  USING (get_my_role() = 'super_admin')
+  WITH CHECK (get_my_role() = 'super_admin');
+
+DROP POLICY IF EXISTS "Const admin reads own places" ON places;
+CREATE POLICY "Const admin reads own places"
+  ON places FOR SELECT TO authenticated
+  USING (get_my_role() = 'constituency_admin' AND constituency_id = get_my_constituency());
+
+DROP POLICY IF EXISTS "Monitor reads constituency places" ON places;
+CREATE POLICY "Monitor reads constituency places"
+  ON places FOR SELECT TO authenticated
+  USING (
+    get_my_role() = 'monitor'
+    AND constituency_id = (SELECT constituency_id FROM profiles WHERE id = auth.uid())
+  );
+
+-- ============================================================
 -- MIGRATION NOTE (run in Supabase SQL editor):
 -- If views already exist, DROP them first:
 --   DROP VIEW IF EXISTS constituency_content_stats;

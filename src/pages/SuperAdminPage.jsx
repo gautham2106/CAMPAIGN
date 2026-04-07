@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase, supabaseAdmin } from '../lib/supabase'
 import { getTodayIST } from '../lib/dateUtils'
 import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
+import * as XLSX from 'xlsx'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -194,12 +195,15 @@ export default function SuperAdminPage() {
   const [constAdmins, setConstAdmins] = useState([])
   const [allAgents, setAllAgents] = useState([])
   const [allMonitors, setAllMonitors] = useState([])
-  const [boothAssignments, setBoothAssignments] = useState([]) // monitor_booth_assignments
+  const [boothAssignments, setBoothAssignments] = useState([])
+  const [places, setPlaces] = useState([])
   const [contents, setContents] = useState([])
   const [dateContents, setDateContents] = useState([])
 
-  // Compliance stats indexed: { [agent_id]: { [content_id]: { [platform]: is_checked } } }
+  // Constituency-level aggregated stats: { [content_id]: { [constituency_id]: { wa, fb, ig, all, total } } }
   const [logMap, setLogMap] = useState({})
+  // Per-agent compliance for Admins tab monitor breakdown: { [agent_id]: { [content_id]: { [platform]: bool } } }
+  const [agentLogMap, setAgentLogMap] = useState({})
 
   const [loading, setLoading] = useState(true)
   const [showAddContent, setShowAddContent] = useState(false)
@@ -212,6 +216,13 @@ export default function SuperAdminPage() {
   // Field Ops tab
   const [expandedConstId, setExpandedConstId] = useState(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState(null)
+
+  // Places Excel upload
+  const [placesUploadConstId, setPlacesUploadConstId] = useState('')
+  const [placesUploadRows, setPlacesUploadRows] = useState([])
+  const [placesUploading, setPlacesUploading] = useState(false)
+  const [placesUploadError, setPlacesUploadError] = useState('')
+  const placesFileRef = useRef(null)
 
   // Per-constituency selected content filter in dashboard drill-down
 
@@ -233,14 +244,15 @@ export default function SuperAdminPage() {
     setError('')
     try {
       const client = supabaseAdmin ?? supabase
-      const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes, boothRes] = await Promise.all([
+      const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes, boothRes, placesRes] = await Promise.all([
         client.from('constituencies').select('*').order('name'),
-        client.from('digital_agents').select('*'),
-        client.from('profiles').select('id, full_name, email, phone, constituency_id').eq('role', 'monitor'),
-        client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin'),
+        client.from('digital_agents').select('*').limit(50000),
+        client.from('profiles').select('id, full_name, email, phone, constituency_id').eq('role', 'monitor').limit(5000),
+        client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin').limit(5000),
         client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
         client.from('daily_content').select('content_date'),
         client.from('monitor_booth_assignments').select('*'),
+        client.from('places').select('*'),
       ])
       if (constRes.error) throw constRes.error
       setConstituencies(constRes.data ?? [])
@@ -249,6 +261,7 @@ export default function SuperAdminPage() {
       setConstAdmins(adminsRes.data ?? [])
       setContents(contentRes.data ?? [])
       setBoothAssignments(boothRes.data ?? [])
+      setPlaces(placesRes.data ?? [])
       const unique = [...new Set((allDatesRes.data ?? []).map(r => r.content_date))]
       setAllContentDates(unique)
     } catch (e) {
@@ -263,9 +276,7 @@ export default function SuperAdminPage() {
     try {
       const client = supabaseAdmin ?? supabase
 
-      // Fetch content + pre-aggregated stats in one shot from the DB view.
-      // constituency_content_stats = one row per (content × constituency)
-      // instead of fetching thousands of raw compliance_log rows.
+      // 1. Fetch constituency-level aggregated stats from view (for Dashboard tab)
       const { data: stats, error: se } = await client
         .from('constituency_content_stats')
         .select('*')
@@ -283,11 +294,11 @@ export default function SuperAdminPage() {
       }
       setDateContents(dc)
 
-      // Build statsMap: { [content_id]: { [constituency_id]: { wa, fb, ig, all_done, total } } }
-      const map = {}
+      // Build constLogMap: { [content_id]: { [constituency_id]: { wa, fb, ig, all, total } } }
+      const constMap = {}
       for (const row of stats ?? []) {
-        if (!map[row.content_id]) map[row.content_id] = {}
-        map[row.content_id][row.constituency_id] = {
+        if (!constMap[row.content_id]) constMap[row.content_id] = {}
+        constMap[row.content_id][row.constituency_id] = {
           total: row.total_agents,
           wa:    row.wa_done,
           fb:    row.fb_done,
@@ -295,7 +306,31 @@ export default function SuperAdminPage() {
           all:   row.all_done,
         }
       }
-      setLogMap(map)
+      setLogMap(constMap)
+
+      // 2. Fetch raw per-agent compliance logs for Admins tab (monitor-level breakdown)
+      // Filter only by content_id (not agent_id) to avoid PostgREST URL length limit
+      const contentIds = dc.map(c => c.id)
+      if (contentIds.length > 0) {
+        const { data: logs, error: le } = await client
+          .from('compliance_logs')
+          .select('agent_id, content_id, platform, is_checked')
+          .in('content_id', contentIds)
+          .eq('is_checked', true)
+          .limit(100000)
+        if (le) throw le
+
+        // Build agentLogMap: { [agent_id]: { [content_id]: { [platform]: bool } } }
+        const agentMap = {}
+        for (const log of logs ?? []) {
+          if (!agentMap[log.agent_id]) agentMap[log.agent_id] = {}
+          if (!agentMap[log.agent_id][log.content_id]) agentMap[log.agent_id][log.content_id] = {}
+          agentMap[log.agent_id][log.content_id][log.platform] = log.is_checked
+        }
+        setAgentLogMap(agentMap)
+      } else {
+        setAgentLogMap({})
+      }
     } catch (e) {
       setError(e.message)
     }
@@ -304,6 +339,17 @@ export default function SuperAdminPage() {
   // Compute stats for a set of agent IDs on selectedDate
   // constId: filter content to only items targeted at this constituency
   // filterContentId: further narrow to a single content item
+  function getMonitorPlaces(monitorId) {
+    const ranges = boothAssignments.filter(b => b.monitor_id === monitorId)
+    const matched = new Set()
+    for (const r of ranges) {
+      for (const p of places) {
+        if (r.booth_from <= p.booth_to && r.booth_to >= p.booth_from) matched.add(p.name)
+      }
+    }
+    return [...matched]
+  }
+
   function computeStats(agentIds, filterContentId = null, constId = null) {
     // Filter date content to what's relevant for this constituency
     const constContents = constId
@@ -324,12 +370,14 @@ export default function SuperAdminPage() {
     for (const aid of agentIds) {
       let agentFullyDone = true
       for (const cid of contentIds) {
+        let allForContent = true
         for (const p of PLATFORMS) {
-          if (logMap[aid]?.[cid]?.[p]?.is_checked === true) platformChecked[p]++
-          else agentFullyDone = false
+          if (agentLogMap[aid]?.[cid]?.[p] === true) platformChecked[p]++
+          else allForContent = false
         }
+        if (!allForContent) agentFullyDone = false
       }
-      if (agentFullyDone && contentCount > 0) done++
+      if (agentFullyDone) done++
     }
 
     const overall = pct(Object.values(platformChecked).reduce((s, v) => s + v, 0), opportunities * 3)
@@ -342,6 +390,61 @@ export default function SuperAdminPage() {
         instagram: pct(platformChecked.instagram, opportunities),
       },
       overall,
+    }
+  }
+
+  function handlePlacesFile(e) {
+    setPlacesUploadError('')
+    setPlacesUploadRows([])
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = evt => {
+      try {
+        const wb = XLSX.read(evt.target.result, { type: 'binary' })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
+        const parsed = []
+        for (const r of rows) {
+          // Support various column name casings
+          const name = String(r['Place Name'] ?? r['place_name'] ?? r['Name'] ?? r['name'] ?? '').trim()
+          const from = parseInt(r['Booth From'] ?? r['booth_from'] ?? r['BoothFrom'] ?? r['from'] ?? 0)
+          const to = parseInt(r['Booth To'] ?? r['booth_to'] ?? r['BoothTo'] ?? r['to'] ?? 0)
+          if (!name || isNaN(from) || isNaN(to) || from < 1 || to < from) continue
+          parsed.push({ name, booth_from: from, booth_to: to })
+        }
+        if (parsed.length === 0) { setPlacesUploadError('No valid rows found. Columns needed: Place Name, Booth From, Booth To'); return }
+        setPlacesUploadRows(parsed)
+      } catch (err) {
+        setPlacesUploadError('Failed to parse file: ' + err.message)
+      }
+    }
+    reader.readAsBinaryString(file)
+  }
+
+  async function savePlaces() {
+    if (!placesUploadConstId) { setPlacesUploadError('Please select a constituency first.'); return }
+    if (!placesUploadRows.length) return
+    const client = supabaseAdmin ?? supabase
+    setPlacesUploading(true)
+    setPlacesUploadError('')
+    try {
+      // Delete existing places for this constituency then insert new ones
+      const { error: delErr } = await client.from('places').delete().eq('constituency_id', placesUploadConstId)
+      if (delErr) throw delErr
+      const inserts = placesUploadRows.map(r => ({ ...r, constituency_id: placesUploadConstId }))
+      const { error: insErr } = await client.from('places').insert(inserts)
+      if (insErr) throw insErr
+      // Reload places
+      const { data: updatedPlaces } = await client.from('places').select('*')
+      setPlaces(updatedPlaces ?? [])
+      setPlacesUploadRows([])
+      setPlacesUploadConstId('')
+      if (placesFileRef.current) placesFileRef.current.value = ''
+    } catch (err) {
+      setPlacesUploadError(err.message)
+    } finally {
+      setPlacesUploading(false)
     }
   }
 
@@ -840,6 +943,55 @@ export default function SuperAdminPage() {
               })
             )}
           </div>
+
+          {/* Places Upload */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+            <p className="text-sm font-bold text-gray-800">Upload Places (Booth Range → Place Name)</p>
+            <p className="text-xs text-gray-500">Excel/CSV with columns: <span className="font-mono bg-gray-100 px-1 rounded">Place Name</span>, <span className="font-mono bg-gray-100 px-1 rounded">Booth From</span>, <span className="font-mono bg-gray-100 px-1 rounded">Booth To</span></p>
+
+            <div className="flex flex-col gap-2">
+              <select
+                value={placesUploadConstId}
+                onChange={e => setPlacesUploadConstId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
+              >
+                <option value="">Select constituency…</option>
+                {constituencies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <input
+                ref={placesFileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handlePlacesFile}
+                className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
+              />
+            </div>
+
+            {placesUploadError && (
+              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{placesUploadError}</div>
+            )}
+
+            {placesUploadRows.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-600">{placesUploadRows.length} rows parsed — preview:</p>
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                  {placesUploadRows.map((r, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+                      <span className="flex-1 text-gray-800 font-medium">{r.name}</span>
+                      <span className="text-gray-400">Booths {r.booth_from}–{r.booth_to}</span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={savePlaces}
+                  disabled={placesUploading || !placesUploadConstId}
+                  className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white text-sm font-semibold py-2 rounded-lg"
+                >
+                  {placesUploading ? 'Saving…' : `Save ${placesUploadRows.length} places to ${constituencies.find(c => c.id === placesUploadConstId)?.name ?? 'constituency'}`}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -894,6 +1046,7 @@ export default function SuperAdminPage() {
                       }
                       const rangeLabel = mRanges.map(r => `${r.booth_from}–${r.booth_to}`).join(', ')
                       const mIsOpen = expandedMonitorId === m.id
+                      const mPlaces = getMonitorPlaces(m.id)
 
                       return (
                         <div key={m.id} className="border-b border-gray-100 last:border-0">
@@ -904,6 +1057,7 @@ export default function SuperAdminPage() {
                           >
                             <div className="min-w-0">
                               <p className="text-sm font-semibold text-gray-800">{m.full_name}</p>
+                              {mPlaces.length > 0 && <p className="text-xs text-indigo-500">{mPlaces.join(' · ')}</p>}
                               <p className="text-xs text-indigo-500 mt-0.5">
                                 {rangeLabel ? `Booths: ${rangeLabel}` : 'No booth assignment'}
                                 <span className="text-gray-400 ml-2">· {mAgents.length} agents</span>
