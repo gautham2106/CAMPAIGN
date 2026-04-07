@@ -262,30 +262,38 @@ export default function SuperAdminPage() {
     setError('')
     try {
       const client = supabaseAdmin ?? supabase
-      const { data: dc, error: ce } = await client
-        .from('daily_content')
+
+      // Fetch content + pre-aggregated stats in one shot from the DB view.
+      // constituency_content_stats = one row per (content × constituency)
+      // instead of fetching thousands of raw compliance_log rows.
+      const { data: stats, error: se } = await client
+        .from('constituency_content_stats')
         .select('*')
         .eq('content_date', selectedDate)
-        .order('created_at')
-      if (ce) throw ce
-      setDateContents(dc ?? [])
+      if (se) throw se
 
-      if (!dc?.length) { setLogMap({}); return }
+      // Derive unique content items for the date (preserving order)
+      const seen = new Set()
+      const dc = []
+      for (const row of stats ?? []) {
+        if (!seen.has(row.content_id)) {
+          seen.add(row.content_id)
+          dc.push({ id: row.content_id, title: row.title, content_date: row.content_date, target_constituencies: row.target_constituencies })
+        }
+      }
+      setDateContents(dc)
 
-      // Fetch all logs — use high limit to bypass Supabase's default 1000-row cap
-      // With ~700 agents × many contents × 3 platforms, we can easily exceed 1000
-      const { data: logs, error: le } = await client
-        .from('compliance_logs')
-        .select('*')
-        .in('content_id', dc.map(c => c.id))
-        .limit(50000)
-      if (le) throw le
-
+      // Build statsMap: { [content_id]: { [constituency_id]: { wa, fb, ig, all_done, total } } }
       const map = {}
-      for (const log of logs ?? []) {
-        if (!map[log.agent_id]) map[log.agent_id] = {}
-        if (!map[log.agent_id][log.content_id]) map[log.agent_id][log.content_id] = {}
-        map[log.agent_id][log.content_id][log.platform] = log
+      for (const row of stats ?? []) {
+        if (!map[row.content_id]) map[row.content_id] = {}
+        map[row.content_id][row.constituency_id] = {
+          total: row.total_agents,
+          wa:    row.wa_done,
+          fb:    row.fb_done,
+          ig:    row.ig_done,
+          all:   row.all_done,
+        }
       }
       setLogMap(map)
     } catch (e) {
@@ -501,25 +509,23 @@ export default function SuperAdminPage() {
           ) : (
             <div className="space-y-4">
               {dateContents.map((content, ci) => {
-                // Only show constituencies targeted by this content (null = all)
+                // logMap[content_id][constituency_id] = { total, wa, fb, ig, all }
+                const constStats = logMap[content.id] ?? {}
+
+                // Only show constituencies that have data for this content
                 const targetedIds = content.target_constituencies ?? null
                 const relevantConsts = targetedIds
                   ? constituencies.filter(c => targetedIds.includes(c.id))
-                  : constituencies
+                  : constituencies.filter(c => constStats[c.id]?.total > 0 || allAgents.some(a => a.constituency_id === c.id))
 
-                // Per-constituency, per-platform counts
                 const rows = relevantConsts.map(c => {
-                  const cAgents = allAgents.filter(a => a.constituency_id === c.id)
-                  const total = cAgents.length
+                  const s = constStats[c.id]
+                  const total = s?.total ?? allAgents.filter(a => a.constituency_id === c.id).length
                   if (!total) return null
-                  const platformDone = {}
-                  for (const p of PLATFORMS) {
-                    platformDone[p] = cAgents.filter(a => logMap[a.id]?.[content.id]?.[p]?.is_checked).length
+                  return {
+                    c, total,
+                    wa: s?.wa ?? 0, fb: s?.fb ?? 0, ig: s?.ig ?? 0, all: s?.all ?? 0,
                   }
-                  const allDone = cAgents.filter(a =>
-                    PLATFORMS.every(p => logMap[a.id]?.[content.id]?.[p]?.is_checked)
-                  ).length
-                  return { c, total, allDone, platformDone }
                 }).filter(Boolean)
 
                 const grandTotal = rows.reduce((s, r) => s + r.total, 0)
@@ -548,31 +554,29 @@ export default function SuperAdminPage() {
                     <div className="divide-y divide-gray-50">
                       {rows.length === 0 ? (
                         <p className="px-4 py-3 text-xs text-gray-400">No agents targeted.</p>
-                      ) : rows.map(({ c, total, allDone, platformDone }) => (
+                      ) : rows.map(({ c, total, wa, fb, ig, all }) => (
                         <div key={c.id} className="flex items-center gap-2 px-4 py-2.5">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-gray-800 truncate">{c.name}</p>
                             <p className="text-xs text-gray-400">{total} agents</p>
                           </div>
-                          {PLATFORMS.map((p, pi) => {
-                            const done = platformDone[p]
+                          {[wa, fb, ig].map((done, i) => {
                             const pc = pct(done, total)
                             const color = pc === 100 ? 'text-green-700 bg-green-50' : pc >= 50 ? 'text-yellow-700 bg-yellow-50' : pc > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
-                            const label = [null, 'text-green-600', 'text-blue-600', 'text-pink-600'][pi + 1]
                             return (
-                              <div key={p} className={`w-14 text-center rounded-lg py-1 ${color}`}>
+                              <div key={i} className={`w-14 text-center rounded-lg py-1 ${color}`}>
                                 <p className="text-xs font-bold">{pc}%</p>
                                 <p className="text-xs">{done}/{total}</p>
                               </div>
                             )
                           })}
                           <div className={`w-14 text-center rounded-lg py-1 ${
-                            pct(allDone, total) === 100 ? 'text-green-700 bg-green-50' :
-                            pct(allDone, total) >= 50 ? 'text-yellow-700 bg-yellow-50' :
-                            allDone > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
+                            pct(all, total) === 100 ? 'text-green-700 bg-green-50' :
+                            pct(all, total) >= 50  ? 'text-yellow-700 bg-yellow-50' :
+                            all > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
                           }`}>
-                            <p className="text-xs font-bold">{pct(allDone, total)}%</p>
-                            <p className="text-xs">{allDone}/{total}</p>
+                            <p className="text-xs font-bold">{pct(all, total)}%</p>
+                            <p className="text-xs">{all}/{total}</p>
                           </div>
                         </div>
                       ))}

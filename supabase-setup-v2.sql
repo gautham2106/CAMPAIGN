@@ -349,3 +349,69 @@ CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
 -- DROP POLICY IF EXISTS "Monitors read own booth assignments" ON monitor_booth_assignments;
 -- Then re-run the CREATE POLICY above ("Monitors read constituency booth assignments")
 -- ============================================================
+
+-- ============================================================
+-- VIEW: agent_compliance
+-- Aggregates compliance_logs into one row per (agent_id, content_id)
+-- instead of 3 rows per platform. Reduces data fetched by 3x.
+-- Used by the super admin dashboard and constituency admin overview.
+-- ============================================================
+CREATE OR REPLACE VIEW agent_compliance AS
+WITH agg AS (
+  SELECT
+    agent_id,
+    content_id,
+    bool_or(platform = 'whatsapp' AND is_checked) AS wa,
+    bool_or(platform = 'facebook' AND is_checked) AS fb,
+    bool_or(platform = 'instagram' AND is_checked) AS ig
+  FROM compliance_logs
+  GROUP BY agent_id, content_id
+)
+SELECT
+  agent_id,
+  content_id,
+  wa,
+  fb,
+  ig,
+  (wa AND fb AND ig) AS all_done
+FROM agg;
+
+-- Grant read access to authenticated users (view inherits underlying table RLS)
+GRANT SELECT ON agent_compliance TO authenticated;
+
+-- ============================================================
+-- VIEW: constituency_content_stats
+-- Pre-aggregated per (content_id, constituency_id, content_date).
+-- Super admin dashboard query: just filter by content_date → a few rows.
+-- ============================================================
+CREATE OR REPLACE VIEW constituency_content_stats AS
+SELECT
+  dc.id            AS content_id,
+  dc.content_date,
+  dc.title,
+  dc.target_constituencies,
+  da.constituency_id,
+  COUNT(DISTINCT da.id)                                               AS total_agents,
+  COUNT(DISTINCT CASE WHEN ac.wa        THEN da.id END)              AS wa_done,
+  COUNT(DISTINCT CASE WHEN ac.fb        THEN da.id END)              AS fb_done,
+  COUNT(DISTINCT CASE WHEN ac.ig        THEN da.id END)              AS ig_done,
+  COUNT(DISTINCT CASE WHEN ac.all_done  THEN da.id END)              AS all_done
+FROM daily_content dc
+JOIN digital_agents da
+  ON (dc.target_constituencies IS NULL
+      OR da.constituency_id = ANY(dc.target_constituencies))
+LEFT JOIN agent_compliance ac
+  ON ac.agent_id = da.id AND ac.content_id = dc.id
+GROUP BY
+  dc.id, dc.content_date, dc.title, dc.target_constituencies,
+  da.constituency_id;
+
+GRANT SELECT ON constituency_content_stats TO authenticated;
+
+-- ============================================================
+-- MIGRATION NOTE (run in Supabase SQL editor):
+-- If views already exist, DROP them first:
+--   DROP VIEW IF EXISTS constituency_content_stats;
+--   DROP VIEW IF EXISTS agent_compliance;
+-- Then re-run the CREATE OR REPLACE VIEW statements above.
+-- ============================================================
