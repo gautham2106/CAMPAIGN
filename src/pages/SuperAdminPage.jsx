@@ -200,10 +200,10 @@ export default function SuperAdminPage() {
   const [contents, setContents] = useState([])
   const [dateContents, setDateContents] = useState([])
 
-  // Constituency-level aggregated stats: { [content_id]: { [constituency_id]: { wa, fb, ig, all, total } } }
+  // Constituency-level stats from view: { [content_id]: { [constituency_id]: { wa, fb, ig, all, total } } }
   const [logMap, setLogMap] = useState({})
-  // Per-agent compliance for Admins tab monitor breakdown: { [agent_id]: { [content_id]: { [platform]: bool } } }
-  const [agentLogMap, setAgentLogMap] = useState({})
+  // Monitor-level stats from view: { [content_id]: { [monitor_id]: { wa, fb, ig, all, total } } }
+  const [monitorLogMap, setMonitorLogMap] = useState({})
 
   const [loading, setLoading] = useState(true)
   const [showAddContent, setShowAddContent] = useState(false)
@@ -308,29 +308,27 @@ export default function SuperAdminPage() {
       }
       setLogMap(constMap)
 
-      // 2. Fetch raw per-agent compliance logs for Admins tab (monitor-level breakdown)
-      // Filter only by content_id (not agent_id) to avoid PostgREST URL length limit
-      const contentIds = dc.map(c => c.id)
-      if (contentIds.length > 0) {
-        const { data: logs, error: le } = await client
-          .from('compliance_logs')
-          .select('agent_id, content_id, platform, is_checked')
-          .in('content_id', contentIds)
-          .eq('is_checked', true)
-          .limit(100000)
-        if (le) throw le
+      // 2. Fetch monitor-level stats from monitor_content_stats view (for Admins tab)
+      // This is pre-aggregated in DB — no large data transfer, no URL limit issues
+      const { data: monStats, error: me } = await client
+        .from('monitor_content_stats')
+        .select('content_id, monitor_id, total_agents, wa_done, fb_done, ig_done, all_done')
+        .eq('content_date', selectedDate)
+      if (me) throw me
 
-        // Build agentLogMap: { [agent_id]: { [content_id]: { [platform]: bool } } }
-        const agentMap = {}
-        for (const log of logs ?? []) {
-          if (!agentMap[log.agent_id]) agentMap[log.agent_id] = {}
-          if (!agentMap[log.agent_id][log.content_id]) agentMap[log.agent_id][log.content_id] = {}
-          agentMap[log.agent_id][log.content_id][log.platform] = log.is_checked
+      // Build monitorLogMap: { [content_id]: { [monitor_id]: { wa, fb, ig, all, total } } }
+      const monMap = {}
+      for (const row of monStats ?? []) {
+        if (!monMap[row.content_id]) monMap[row.content_id] = {}
+        monMap[row.content_id][row.monitor_id] = {
+          total: row.total_agents,
+          wa:    row.wa_done,
+          fb:    row.fb_done,
+          ig:    row.ig_done,
+          all:   row.all_done,
         }
-        setAgentLogMap(agentMap)
-      } else {
-        setAgentLogMap({})
       }
+      setMonitorLogMap(monMap)
     } catch (e) {
       setError(e.message)
     }
@@ -350,46 +348,71 @@ export default function SuperAdminPage() {
     return [...matched]
   }
 
-  function computeStats(agentIds, filterContentId = null, constId = null) {
-    // Filter date content to what's relevant for this constituency
-    const constContents = constId
-      ? dateContents.filter(c => !c.target_constituencies || c.target_constituencies.includes(constId))
-      : dateContents
-    const contentIds = filterContentId
-      ? (constContents.find(c => c.id === filterContentId) ? [filterContentId] : [])
-      : constContents.map(c => c.id)
-    const total = agentIds.length
-    const contentCount = contentIds.length
+  function emptyStats(total = 0) {
+    return { total, done: 0, donePct: 0, platform: { whatsapp: 0, facebook: 0, instagram: 0 }, overall: 0 }
+  }
 
-    if (!total || !contentCount) return { total, done: 0, donePct: 0, platform: { whatsapp: 0, facebook: 0, instagram: 0 }, overall: 0 }
-
-    const opportunities = total * contentCount
-    const platformChecked = { whatsapp: 0, facebook: 0, instagram: 0 }
-    let done = 0
-
-    for (const aid of agentIds) {
-      let agentFullyDone = true
-      for (const cid of contentIds) {
-        let allForContent = true
-        for (const p of PLATFORMS) {
-          if (agentLogMap[aid]?.[cid]?.[p] === true) platformChecked[p]++
-          else allForContent = false
-        }
-        if (!allForContent) agentFullyDone = false
+  // Constituency-level day stats — reads from constituency_content_stats view data
+  function getConstDayStats(constId) {
+    const constContents = dateContents.filter(c =>
+      !c.target_constituencies || c.target_constituencies.includes(constId)
+    )
+    if (!constContents.length) return emptyStats()
+    let totalAgents = 0, waSum = 0, fbSum = 0, igSum = 0, allSum = 0
+    for (const content of constContents) {
+      const s = logMap[content.id]?.[constId]
+      if (s) {
+        totalAgents = s.total // same agents count across all content
+        waSum += s.wa
+        fbSum += s.fb
+        igSum += s.ig
+        allSum += s.all
       }
-      if (agentFullyDone) done++
     }
-
-    const overall = pct(Object.values(platformChecked).reduce((s, v) => s + v, 0), opportunities * 3)
+    if (!totalAgents) return emptyStats(allAgents.filter(a => a.constituency_id === constId).length)
+    const opp = totalAgents * constContents.length
     return {
-      total, done,
-      donePct: pct(done, total),
+      total: totalAgents,
+      done: allSum,
+      donePct: pct(allSum, totalAgents * constContents.length),
       platform: {
-        whatsapp: pct(platformChecked.whatsapp, opportunities),
-        facebook: pct(platformChecked.facebook, opportunities),
-        instagram: pct(platformChecked.instagram, opportunities),
+        whatsapp: pct(waSum, opp),
+        facebook: pct(fbSum, opp),
+        instagram: pct(igSum, opp),
       },
-      overall,
+      overall: pct(waSum + fbSum + igSum, opp * 3),
+    }
+  }
+
+  // Monitor-level day stats — reads from monitor_content_stats view data
+  function getMonitorDayStats(monitorId, constId) {
+    const constContents = dateContents.filter(c =>
+      !c.target_constituencies || c.target_constituencies.includes(constId)
+    )
+    if (!constContents.length) return emptyStats()
+    let totalAgents = 0, waSum = 0, fbSum = 0, igSum = 0, allSum = 0
+    for (const content of constContents) {
+      const s = monitorLogMap[content.id]?.[monitorId]
+      if (s) {
+        totalAgents = s.total
+        waSum += s.wa
+        fbSum += s.fb
+        igSum += s.ig
+        allSum += s.all
+      }
+    }
+    if (!totalAgents) return emptyStats(allAgents.filter(a => a.assigned_monitor_id === monitorId).length)
+    const opp = totalAgents * constContents.length
+    return {
+      total: totalAgents,
+      done: allSum,
+      donePct: pct(allSum, totalAgents * constContents.length),
+      platform: {
+        whatsapp: pct(waSum, opp),
+        facebook: pct(fbSum, opp),
+        instagram: pct(igSum, opp),
+      },
+      overall: pct(waSum + fbSum + igSum, opp * 3),
     }
   }
 
@@ -725,7 +748,7 @@ export default function SuperAdminPage() {
                 const constName = admin.constituencies?.name ?? '—'
                 const adminAgentIds = allAgents.filter(a => a.constituency_id === constId).map(a => a.id)
                 const monitorCount = allMonitors.filter(m => m.constituency_id === constId).length
-                const s = computeStats(adminAgentIds, null, constId)
+                const s = getConstDayStats(constId)
 
                 // Per-monitor stats for this admin's constituency
                 const adminsMonitors = allMonitors.filter(m => m.constituency_id === constId)
@@ -793,7 +816,7 @@ export default function SuperAdminPage() {
                         <div className="space-y-2">
                           {adminsMonitors.map(mon => {
                             const monAgentIds = allAgents.filter(a => a.assigned_monitor_id === mon.id).map(a => a.id)
-                            const ms = computeStats(monAgentIds, null, constId)
+                            const ms = getMonitorDayStats(mon.id, constId)
                             return (
                               <div key={mon.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-gray-50">
                                 <div className="flex-1 min-w-0">

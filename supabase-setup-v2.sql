@@ -447,9 +447,73 @@ CREATE POLICY "Monitor reads constituency places"
   );
 
 -- ============================================================
+-- VIEW: monitor_content_stats
+-- Pre-aggregated per (content_id, monitor_id, constituency_id).
+-- Used by super admin Admins tab for per-monitor compliance breakdown.
+-- Only includes agents that have an assigned_monitor_id.
+-- ============================================================
+CREATE OR REPLACE VIEW monitor_content_stats AS
+SELECT
+  dc.id            AS content_id,
+  dc.content_date,
+  dc.title,
+  dc.target_constituencies,
+  da.assigned_monitor_id  AS monitor_id,
+  da.constituency_id,
+  COUNT(DISTINCT da.id)                                               AS total_agents,
+  COUNT(DISTINCT CASE WHEN ac.wa        THEN da.id END)              AS wa_done,
+  COUNT(DISTINCT CASE WHEN ac.fb        THEN da.id END)              AS fb_done,
+  COUNT(DISTINCT CASE WHEN ac.ig        THEN da.id END)              AS ig_done,
+  COUNT(DISTINCT CASE WHEN ac.all_done  THEN da.id END)              AS all_done
+FROM daily_content dc
+JOIN digital_agents da
+  ON (dc.target_constituencies IS NULL
+      OR da.constituency_id = ANY(dc.target_constituencies))
+  AND da.assigned_monitor_id IS NOT NULL
+LEFT JOIN agent_compliance ac
+  ON ac.agent_id = da.id AND ac.content_id = dc.id
+GROUP BY
+  dc.id, dc.content_date, dc.title, dc.target_constituencies,
+  da.assigned_monitor_id, da.constituency_id;
+
+GRANT SELECT ON monitor_content_stats TO authenticated;
+
+-- ============================================================
 -- MIGRATION NOTE (run in Supabase SQL editor):
 -- If views already exist, DROP them first:
+--   DROP VIEW IF EXISTS monitor_content_stats;
 --   DROP VIEW IF EXISTS constituency_content_stats;
 --   DROP VIEW IF EXISTS agent_compliance;
 -- Then re-run the CREATE OR REPLACE VIEW statements above.
+-- ============================================================
+
+-- ============================================================
+-- QUICK RUN: Copy and paste this block into Supabase SQL Editor
+-- to add the monitor_content_stats view without re-running everything:
+-- ============================================================
+-- DROP VIEW IF EXISTS monitor_content_stats;
+-- CREATE OR REPLACE VIEW monitor_content_stats AS
+-- SELECT
+--   dc.id            AS content_id,
+--   dc.content_date,
+--   dc.title,
+--   dc.target_constituencies,
+--   da.assigned_monitor_id  AS monitor_id,
+--   da.constituency_id,
+--   COUNT(DISTINCT da.id)                                               AS total_agents,
+--   COUNT(DISTINCT CASE WHEN ac.wa        THEN da.id END)              AS wa_done,
+--   COUNT(DISTINCT CASE WHEN ac.fb        THEN da.id END)              AS fb_done,
+--   COUNT(DISTINCT CASE WHEN ac.ig        THEN da.id END)              AS ig_done,
+--   COUNT(DISTINCT CASE WHEN ac.all_done  THEN da.id END)              AS all_done
+-- FROM daily_content dc
+-- JOIN digital_agents da
+--   ON (dc.target_constituencies IS NULL
+--       OR da.constituency_id = ANY(dc.target_constituencies))
+--   AND da.assigned_monitor_id IS NOT NULL
+-- LEFT JOIN agent_compliance ac
+--   ON ac.agent_id = da.id AND ac.content_id = dc.id
+-- GROUP BY
+--   dc.id, dc.content_date, dc.title, dc.target_constituencies,
+--   da.assigned_monitor_id, da.constituency_id;
+-- GRANT SELECT ON monitor_content_stats TO authenticated;
 -- ============================================================
