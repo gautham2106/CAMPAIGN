@@ -225,7 +225,7 @@ export default function SuperAdminPage() {
   const [editContentValues, setEditContentValues] = useState({})
   const [savingContent, setSavingContent] = useState(false)
 
-  useEffect(() => { loadBase() }, [])
+  useEffect(() => { loadBase().then(() => loadDateCompliance()) }, [])
   useEffect(() => { loadDateCompliance() }, [selectedDate])
 
   async function loadBase() {
@@ -272,10 +272,13 @@ export default function SuperAdminPage() {
 
       if (!dc?.length) { setLogMap({}); return }
 
+      // Fetch all logs — use high limit to bypass Supabase's default 1000-row cap
+      // With ~700 agents × many contents × 3 platforms, we can easily exceed 1000
       const { data: logs, error: le } = await client
         .from('compliance_logs')
         .select('*')
         .in('content_id', dc.map(c => c.id))
+        .limit(50000)
       if (le) throw le
 
       const map = {}
@@ -477,7 +480,7 @@ export default function SuperAdminPage() {
                 <span className="ml-auto text-gray-400 sm:ml-2">{showCalendar ? '▲' : '▼'}</span>
               </button>
               <button
-                onClick={() => { loadBase(); loadDateCompliance() }}
+                onClick={() => loadBase().then(() => loadDateCompliance())}
                 className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-700 hover:border-green-400 hover:text-green-700 transition-colors"
                 title="Refresh data">
                 ↻ Refresh
