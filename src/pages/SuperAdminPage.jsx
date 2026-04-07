@@ -216,6 +216,9 @@ export default function SuperAdminPage() {
   // Field Ops tab
   const [expandedConstId, setExpandedConstId] = useState(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState(null)
+  // Pre-aggregated field ops stats from DB views
+  const [constFieldStats, setConstFieldStats] = useState({})   // { [constituency_id]: { total_agents, link_issues, vacant_booths } }
+  const [monitorFieldStats, setMonitorFieldStats] = useState({}) // { [monitor_id]: { total_agents, link_issues, vacant_booths } }
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -244,15 +247,17 @@ export default function SuperAdminPage() {
     setError('')
     try {
       const client = supabaseAdmin ?? supabase
-      const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes, boothRes, placesRes] = await Promise.all([
+      const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes, boothRes, placesRes, constFORes, monFORes] = await Promise.all([
         client.from('constituencies').select('*').order('name'),
         client.from('digital_agents').select('*').limit(50000),
         client.from('profiles').select('id, full_name, email, phone, constituency_id').eq('role', 'monitor').limit(5000),
         client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin').limit(5000),
         client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
-        client.from('daily_content').select('content_date'),
-        client.from('monitor_booth_assignments').select('*'),
-        client.from('places').select('*'),
+        client.from('daily_content').select('content_date').limit(10000),
+        client.from('monitor_booth_assignments').select('*').limit(10000),
+        client.from('places').select('*').limit(10000),
+        client.from('constituency_field_ops_stats').select('*'),
+        client.from('monitor_field_ops_stats').select('*'),
       ])
       if (constRes.error) throw constRes.error
       setConstituencies(constRes.data ?? [])
@@ -264,6 +269,14 @@ export default function SuperAdminPage() {
       setPlaces(placesRes.data ?? [])
       const unique = [...new Set((allDatesRes.data ?? []).map(r => r.content_date))]
       setAllContentDates(unique)
+
+      // Build field ops lookup maps from DB views
+      const cfo = {}
+      for (const r of constFORes.data ?? []) cfo[r.constituency_id] = r
+      setConstFieldStats(cfo)
+      const mfo = {}
+      for (const r of monFORes.data ?? []) mfo[r.monitor_id] = r
+      setMonitorFieldStats(mfo)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -1024,17 +1037,16 @@ export default function SuperAdminPage() {
           {constituencies.map(c => {
             const cMonitors = allMonitors.filter(m => m.constituency_id === c.id)
             const cAgents = allAgents.filter(a => a.constituency_id === c.id)
-            const cLinkIssues = cAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url).length
-
-            // Vacant booths in constituency: all booth ranges - agents with booth numbers
-            const cBoothRanges = boothAssignments.filter(b => b.constituency_id === c.id)
-            const cAssignedBooths = new Set(cAgents.map(a => a.booth_number).filter(n => n != null))
-            const cVacantBooths = []
-            for (const r of cBoothRanges) {
-              for (let n = r.booth_from; n <= r.booth_to; n++) {
-                if (!cAssignedBooths.has(n)) cVacantBooths.push(n)
-              }
-            }
+            // Use DB view stats (pre-computed) — fallback to JS if view data not yet loaded
+            const cfo = constFieldStats[c.id]
+            const cLinkIssues = cfo?.link_issues ?? cAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url).length
+            const cVacantCount = cfo?.vacant_booths ?? (() => {
+              const ranges = boothAssignments.filter(b => b.constituency_id === c.id)
+              const assigned = new Set(cAgents.map(a => a.booth_number).filter(n => n != null))
+              let v = 0
+              for (const r of ranges) for (let n = r.booth_from; n <= r.booth_to; n++) if (!assigned.has(n)) v++
+              return v
+            })()
 
             const isOpen = expandedConstId === c.id
             return (
@@ -1046,7 +1058,7 @@ export default function SuperAdminPage() {
                   <span className="font-semibold text-gray-800">{c.name}</span>
                   <div className="flex items-center gap-2 text-xs">
                     {cLinkIssues > 0 && <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">⚠ {cLinkIssues} links</span>}
-                    {cVacantBooths.length > 0 && <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{cVacantBooths.length} vacant</span>}
+                    {cVacantCount > 0 && <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{cVacantCount} vacant</span>}
                     <span className="text-gray-500">{cMonitors.length} monitors · {cAgents.length} agents</span>
                     <span className="text-gray-400">{isOpen ? '▲' : '▼'}</span>
                   </div>
@@ -1058,15 +1070,17 @@ export default function SuperAdminPage() {
                       <p className="px-4 py-3 text-xs text-gray-400">No monitors in this constituency.</p>
                     ) : cMonitors.map(m => {
                       const mAgents = cAgents.filter(a => a.assigned_monitor_id === m.id)
+                      // Use DB view for counts; keep full mLinkIssues array for detail list
+                      const mfo = monitorFieldStats[m.id]
                       const mLinkIssues = mAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url)
+                      const mVacantCount = mfo?.vacant_booths ?? (() => {
+                        const ranges = boothAssignments.filter(b => b.monitor_id === m.id)
+                        const assigned = new Set(mAgents.map(a => a.booth_number).filter(n => n != null))
+                        let v = 0
+                        for (const r of ranges) for (let n = r.booth_from; n <= r.booth_to; n++) if (!assigned.has(n)) v++
+                        return v
+                      })()
                       const mRanges = boothAssignments.filter(b => b.monitor_id === m.id)
-                      const mAssignedBooths = new Set(mAgents.map(a => a.booth_number).filter(n => n != null))
-                      const mVacant = []
-                      for (const r of mRanges) {
-                        for (let n = r.booth_from; n <= r.booth_to; n++) {
-                          if (!mAssignedBooths.has(n)) mVacant.push(n)
-                        }
-                      }
                       const rangeLabel = mRanges.map(r => `${r.booth_from}–${r.booth_to}`).join(', ')
                       const mIsOpen = expandedMonitorId === m.id
                       const mPlaces = getMonitorPlaces(m.id)
@@ -1088,21 +1102,30 @@ export default function SuperAdminPage() {
                             </div>
                             <div className="flex items-center gap-1.5 text-xs shrink-0 ml-2">
                               {mLinkIssues.length > 0 && <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">⚠ {mLinkIssues.length} links</span>}
-                              {mVacant.length > 0 && <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{mVacant.length} vacant</span>}
+                              {mVacantCount > 0 && <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{mVacantCount} vacant</span>}
                               <span className="text-gray-400 ml-1">{mIsOpen ? '▲' : '▼'}</span>
                             </div>
                           </button>
 
                           {/* Expanded detail */}
-                          {mIsOpen && (
+                          {mIsOpen && (() => {
+                            // Compute actual vacant booth numbers only when expanded (for the detail list)
+                            const mAssigned = new Set(mAgents.map(a => a.booth_number).filter(n => n != null))
+                            const mVacantList = []
+                            for (const r of mRanges) {
+                              for (let n = r.booth_from; n <= r.booth_to; n++) {
+                                if (!mAssigned.has(n)) mVacantList.push(n)
+                              }
+                            }
+                            return (
                             <div className="bg-gray-50 border-t border-gray-100 px-4 py-3 space-y-3">
 
                               {/* Vacant booths */}
-                              {mVacant.length > 0 ? (
+                              {mVacantList.length > 0 ? (
                                 <div>
-                                  <p className="text-xs font-bold text-red-600 mb-1.5">Vacant booths ({mVacant.length})</p>
+                                  <p className="text-xs font-bold text-red-600 mb-1.5">Vacant booths ({mVacantList.length})</p>
                                   <div className="flex flex-wrap gap-1">
-                                    {mVacant.map(n => (
+                                    {mVacantList.map(n => (
                                       <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">#{n}</span>
                                     ))}
                                   </div>
@@ -1151,7 +1174,7 @@ export default function SuperAdminPage() {
                                 </div>
                               )}
                             </div>
-                          )}
+                          )})()}
                         </div>
                       )
                     })}

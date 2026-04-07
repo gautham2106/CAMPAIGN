@@ -517,3 +517,115 @@ GRANT SELECT ON monitor_content_stats TO authenticated;
 --   da.assigned_monitor_id, da.constituency_id;
 -- GRANT SELECT ON monitor_content_stats TO authenticated;
 -- ============================================================
+
+-- ============================================================
+-- VIEW: monitor_field_ops_stats
+-- Pre-aggregated per monitor for the Field Ops tab.
+-- Computes vacant_booths and link_issues in the DB using generate_series
+-- so the frontend doesn't have to loop through every booth number in JS.
+--
+-- vacant_booths = booths in the assigned range that have no agent assigned
+-- link_issues   = agents missing or having invalid FB or IG URLs
+-- ============================================================
+CREATE OR REPLACE VIEW monitor_field_ops_stats AS
+WITH booth_numbers AS (
+  -- Expand every booth assignment row into one row per booth number
+  SELECT
+    mba.monitor_id,
+    mba.constituency_id,
+    generate_series(mba.booth_from, mba.booth_to) AS booth_num
+  FROM monitor_booth_assignments mba
+),
+vacant AS (
+  -- Booths that have no digital_agent with that booth_number assigned to this monitor
+  SELECT
+    bn.monitor_id,
+    bn.constituency_id,
+    COUNT(*) AS vacant_booths
+  FROM booth_numbers bn
+  LEFT JOIN digital_agents da
+    ON da.assigned_monitor_id = bn.monitor_id
+    AND da.booth_number = bn.booth_num
+  WHERE da.id IS NULL
+  GROUP BY bn.monitor_id, bn.constituency_id
+),
+totals AS (
+  SELECT
+    assigned_monitor_id AS monitor_id,
+    COUNT(*)                                                          AS total_agents,
+    COUNT(*) FILTER (
+      WHERE
+        (fb_url IS NULL OR fb_url = ''
+         OR fb_url !~ '^(https?://|www\.).+\..+')
+        OR
+        (ig_url IS NULL OR ig_url = ''
+         OR ig_url !~ '^(https?://|www\.).+\..+')
+    )                                                                 AS link_issues
+  FROM digital_agents
+  WHERE assigned_monitor_id IS NOT NULL
+  GROUP BY assigned_monitor_id
+)
+SELECT
+  t.monitor_id,
+  COALESCE(v.constituency_id,
+    (SELECT constituency_id FROM digital_agents
+     WHERE assigned_monitor_id = t.monitor_id LIMIT 1)
+  )                         AS constituency_id,
+  t.total_agents,
+  t.link_issues,
+  COALESCE(v.vacant_booths, 0) AS vacant_booths
+FROM totals t
+LEFT JOIN vacant v ON v.monitor_id = t.monitor_id;
+
+GRANT SELECT ON monitor_field_ops_stats TO authenticated;
+
+-- ============================================================
+-- VIEW: constituency_field_ops_stats
+-- Same aggregation but at constituency level for the collapsed header row.
+-- ============================================================
+CREATE OR REPLACE VIEW constituency_field_ops_stats AS
+WITH vacant AS (
+  SELECT
+    mba.constituency_id,
+    COUNT(*) AS vacant_booths
+  FROM (
+    SELECT mba2.constituency_id, generate_series(mba2.booth_from, mba2.booth_to) AS booth_num, mba2.monitor_id
+    FROM monitor_booth_assignments mba2
+  ) mba
+  LEFT JOIN digital_agents da
+    ON da.constituency_id = mba.constituency_id
+    AND da.booth_number = mba.booth_num
+  WHERE da.id IS NULL
+  GROUP BY mba.constituency_id
+),
+totals AS (
+  SELECT
+    constituency_id,
+    COUNT(*)                                                          AS total_agents,
+    COUNT(*) FILTER (
+      WHERE
+        (fb_url IS NULL OR fb_url = ''
+         OR fb_url !~ '^(https?://|www\.).+\..+')
+        OR
+        (ig_url IS NULL OR ig_url = ''
+         OR ig_url !~ '^(https?://|www\.).+\..+')
+    )                                                                 AS link_issues
+  FROM digital_agents
+  GROUP BY constituency_id
+)
+SELECT
+  t.constituency_id,
+  t.total_agents,
+  t.link_issues,
+  COALESCE(v.vacant_booths, 0) AS vacant_booths
+FROM totals t
+LEFT JOIN vacant v ON v.constituency_id = t.constituency_id;
+
+GRANT SELECT ON constituency_field_ops_stats TO authenticated;
+
+-- ============================================================
+-- QUICK RUN: Run these in Supabase SQL Editor to add Field Ops views:
+--   DROP VIEW IF EXISTS monitor_field_ops_stats;
+--   DROP VIEW IF EXISTS constituency_field_ops_stats;
+-- Then re-run the CREATE OR REPLACE VIEW blocks above.
+-- ============================================================
