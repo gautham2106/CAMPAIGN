@@ -213,7 +213,6 @@ export default function SuperAdminPage() {
   const [expandedConstId, setExpandedConstId] = useState(null)
 
   // Per-constituency selected content filter in dashboard drill-down
-  const [constContentFilters, setConstContentFilters] = useState({}) // { [constId]: contentId | null }
 
   // Constituency rename/delete
   const [editingConstId, setEditingConstId] = useState(null)
@@ -401,7 +400,6 @@ setConstituencies(constRes.data ?? [])
   })
 
   // Aggregate totals for dashboard summary
-  const totalConstAgentStats = computeStats(allAgents.map(a => a.id))
   const todayContents = contents.filter(c => c.content_date === TODAY)
 
   if (loading) {
@@ -470,197 +468,79 @@ setConstituencies(constRes.data ?? [])
             </button>
             {showCalendar && (
               <div className="mt-2 max-w-sm">
-                <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false); setConstContentFilters({}) }} markedDates={allContentDates} />
+                <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false) }} markedDates={allContentDates} />
               </div>
             )}
           </div>
 
-          {/* Debug info — remove after fixing */}
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs font-mono text-yellow-800 space-y-0.5">
-            <p>🔍 agents={allAgents.length} | content={dateContents.length} | logs={Object.keys(logMap).length} agents with logs</p>
-            {(() => {
-              const firstAgentId = Object.keys(logMap)[0]
-              const firstAgentInAllAgents = firstAgentId ? allAgents.some(a => a.id === firstAgentId) : null
-              const firstContentId = dateContents[0]?.id
-              const sample = firstAgentId && firstContentId ? logMap[firstAgentId]?.[firstContentId] : null
-              return <>
-                <p>logMap[0] in allAgents: {String(firstAgentInAllAgents)} | dateContents[0].id: {firstContentId?.slice(0,8)}...</p>
-                <p>sample platforms: {JSON.stringify(sample ? Object.keys(sample) : null)} | is_checked values: {JSON.stringify(sample ? Object.values(sample).map(l => l?.is_checked) : null)}</p>
-              </>
-            })()}
-          </div>
+          {/* Content × Constituency grid */}
+          {dateContents.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400 text-sm">
+              No content posted for {isToday ? 'today' : displayDate}.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {dateContents.map((content, ci) => {
+                // Per-constituency stats for this content item
+                const rows = constituencies.map(c => {
+                  const cAgents = allAgents.filter(a => a.constituency_id === c.id)
+                  const total = cAgents.length
+                  let done = 0
+                  for (const a of cAgents) {
+                    if (PLATFORMS.every(p => logMap[a.id]?.[content.id]?.[p]?.is_checked)) done++
+                  }
+                  return { c, total, done, pct: pct(done, total) }
+                }).filter(r => r.total > 0)
 
-          {/* Overall platform summary */}
-          {dateContents.length > 0 && allAgents.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-bold text-gray-900">Platform Summary</h3>
-                <PctBadge value={totalConstAgentStats.overall} size="lg" />
-              </div>
-              <div className="space-y-2">
-                {PLATFORMS.map(p => (
-                  <PlatformBar key={p} label={P_SHORT[p]} value={totalConstAgentStats.platform[p]} />
-                ))}
-              </div>
-              <p className="text-xs text-gray-400 mt-3">
-                {totalConstAgentStats.done}/{totalConstAgentStats.total} agents fully verified · {dateContents.length} content item(s)
-              </p>
+                const grandTotal = rows.reduce((s, r) => s + r.total, 0)
+                const grandDone  = rows.reduce((s, r) => s + r.done, 0)
+                const grandPct   = pct(grandDone, grandTotal)
+
+                return (
+                  <div key={content.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    {/* Content header */}
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="shrink-0 bg-indigo-100 text-indigo-700 font-bold text-xs px-2 py-0.5 rounded-full">
+                          {ci + 1}
+                        </span>
+                        <p className="font-semibold text-gray-900 truncate">{content.title}</p>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-2">
+                        <span className="text-xs text-gray-400">{grandDone}/{grandTotal} agents</span>
+                        <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full ${
+                          grandPct === 100 ? 'bg-green-100 text-green-700' :
+                          grandPct >= 50  ? 'bg-yellow-100 text-yellow-700' :
+                          grandPct > 0    ? 'bg-red-100 text-red-600' :
+                          'bg-gray-100 text-gray-400'
+                        }`}>{grandPct}%</span>
+                      </div>
+                    </div>
+                    {/* Constituency rows */}
+                    <div className="divide-y divide-gray-50">
+                      {rows.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-gray-400">No agents in any constituency.</p>
+                      ) : rows.map(({ c, total, done, pct: p }) => (
+                        <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+                          <p className="flex-1 text-sm text-gray-800 truncate">{c.name}</p>
+                          <p className="text-xs text-gray-400 shrink-0">{done}/{total}</p>
+                          <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden shrink-0">
+                            <div
+                              className={`h-full rounded-full ${p === 100 ? 'bg-green-500' : p >= 50 ? 'bg-yellow-400' : p > 0 ? 'bg-red-400' : 'bg-gray-200'}`}
+                              style={{ width: `${p}%` }}
+                            />
+                          </div>
+                          <span className={`text-xs font-bold w-9 text-right shrink-0 ${
+                            p === 100 ? 'text-green-700' : p >= 50 ? 'text-yellow-700' : p > 0 ? 'text-red-600' : 'text-gray-400'
+                          }`}>{p}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
-
-          {/* Constituency breakdown */}
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">Constituency Overview — {isToday ? 'Today' : displayDate}</h3>
-              {dateContents.length > 0 && (() => {
-                const criticalCount = constituencies.filter(c => {
-                  const ids = allAgents.filter(a => a.constituency_id === c.id).map(a => a.id)
-                  return ids.length > 0 && computeStats(ids).donePct < 50
-                }).length
-                return criticalCount > 0 ? (
-                  <span className="text-xs bg-red-100 text-red-700 font-bold px-2.5 py-1 rounded-full">
-                    ⚠ {criticalCount} below 50%
-                  </span>
-                ) : null
-              })()}
-            </div>
-            {constituencies.length === 0 ? (
-              <div className="p-8 text-center text-gray-400 text-sm">No constituencies yet.</div>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {[...constituencies]
-                  .map(c => ({ c, s: computeStats(allAgents.filter(a => a.constituency_id === c.id).map(a => a.id)) }))
-                  .sort((a, b) => a.s.donePct - b.s.donePct)
-                  .map(({ c, s }) => {
-                  const cMonitors = allMonitors.filter(m => m.constituency_id === c.id)
-                  const isExpanded = expandedConstId === c.id
-                  const statusBg = s.donePct === 100 ? 'bg-green-50' : s.donePct > 50 ? 'bg-yellow-50' : s.total > 0 ? 'bg-red-50' : ''
-                  return (
-                    <div key={c.id}>
-                      <button
-                        className={`w-full px-5 py-4 text-left hover:brightness-95 transition-all ${statusBg}`}
-                        onClick={() => setExpandedConstId(isExpanded ? null : c.id)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="font-semibold text-gray-900">{c.name}</p>
-                            <p className="text-xs text-gray-500">{cMonitors.length} monitors · {s.total} agents</p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className="text-right">
-                              <p className={`text-lg font-bold ${s.donePct === 100 ? 'text-green-600' : s.donePct > 50 ? 'text-yellow-600' : s.total > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                                {s.total > 0 ? `${s.donePct}%` : '—'}
-                              </p>
-                              <p className="text-xs text-gray-400">{s.done}/{s.total} done</p>
-                            </div>
-                            <span className="text-gray-400 text-xs">{isExpanded ? '▲' : '▼'}</span>
-                          </div>
-                        </div>
-                        {dateContents.length > 0 && s.total > 0 && (
-                          <div className="space-y-1 mt-2">
-                            {PLATFORMS.map(p => <PlatformBar key={p} label={P_SHORT[p]} value={s.platform[p]} />)}
-                          </div>
-                        )}
-                      </button>
-                      {/* Expanded: content filter + monitor drill-down */}
-                      {isExpanded && (() => {
-                        const selectedCid = constContentFilters[c.id] ?? null
-                        const setSelectedCid = (cid) => setConstContentFilters(prev => ({ ...prev, [c.id]: cid }))
-                        return (
-                          <div className="border-t border-gray-100 bg-gray-50">
-                            {/* Content chips */}
-                            {dateContents.length > 0 && (
-                              <div className="px-4 pt-3 pb-2 flex gap-2 overflow-x-auto">
-                                <button
-                                  onClick={() => setSelectedCid(null)}
-                                  className={`shrink-0 px-3 py-1 rounded-lg text-xs font-semibold border transition-colors ${
-                                    selectedCid === null
-                                      ? 'bg-zinc-900 text-white border-zinc-900'
-                                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
-                                  }`}
-                                >
-                                  All ({dateContents.length})
-                                </button>
-                                {dateContents.map((dc, i) => (
-                                  <button
-                                    key={dc.id}
-                                    onClick={() => setSelectedCid(selectedCid === dc.id ? null : dc.id)}
-                                    title={dc.title}
-                                    className={`shrink-0 px-3 py-1 rounded-lg text-xs font-semibold border transition-colors max-w-[150px] truncate ${
-                                      selectedCid === dc.id
-                                        ? 'bg-indigo-600 text-white border-indigo-600'
-                                        : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
-                                    }`}
-                                  >
-                                    {i + 1}. {dc.title.length > 16 ? dc.title.slice(0, 16) + '…' : dc.title}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            {dateContents.length === 0 && (
-                              <p className="px-6 py-2 text-xs text-gray-400">No content on this date.</p>
-                            )}
-                            {/* Monitor rows */}
-                            <div className="divide-y divide-gray-100">
-                              {cMonitors.length === 0 ? (
-                                <p className="px-6 py-3 text-xs text-gray-400">No monitors assigned.</p>
-                              ) : (
-                                [...cMonitors]
-                                  .map(m => ({ m, ms: computeStats(allAgents.filter(a => a.assigned_monitor_id === m.id).map(a => a.id), selectedCid) }))
-                                  .sort((a, b) => a.ms.donePct - b.ms.donePct)
-                                  .map(({ m, ms }) => {
-                                    const phone = m.phone?.replace(/\D/g, '') || ''
-                                    const mStatusColor = ms.donePct === 100 ? 'text-green-600' : ms.donePct > 50 ? 'text-yellow-600' : ms.total > 0 ? 'text-red-500' : 'text-gray-400'
-                                    const mBg = ms.donePct === 0 && ms.total > 0 ? 'bg-red-50' : ''
-                                    return (
-                                      <div key={m.id} className={`px-6 py-3 flex items-center gap-3 ${mBg}`}>
-                                        <div className="flex-1 min-w-0">
-                                          <p className="text-sm font-medium text-gray-800">{m.full_name}</p>
-                                          <p className="text-xs text-gray-400">
-                                            {ms.done}/{ms.total} agents done
-                                            {selectedCid && (
-                                              <span className="ml-1 text-indigo-500">· {dateContents.find(d => d.id === selectedCid)?.title.slice(0, 14)}</span>
-                                            )}
-                                          </p>
-                                        </div>
-                                        <div className="text-right shrink-0">
-                                          <span className={`text-base font-bold ${mStatusColor}`}>
-                                            {ms.total > 0 ? `${ms.donePct}%` : '—'}
-                                          </span>
-                                          {ms.total > 0 && (
-                                            <div className="flex gap-1 mt-0.5 justify-end">
-                                              {PLATFORMS.map(p => (
-                                                <span key={p} className={`text-xs px-1 py-0 rounded font-bold ${
-                                                  (ms.platform[p] ?? 0) >= 80 ? 'bg-green-100 text-green-700' :
-                                                  (ms.platform[p] ?? 0) >= 50 ? 'bg-yellow-100 text-yellow-700' :
-                                                  'bg-red-100 text-red-600'
-                                                }`}>{P_SHORT[p]}</span>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                        {phone && ms.donePct < 80 && ms.total > 0 && (
-                                          <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
-                                            target="_blank" rel="noopener noreferrer"
-                                            title="WhatsApp this monitor"
-                                            className="shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1 rounded-lg">
-                                            💬
-                                          </a>
-                                        )}
-                                      </div>
-                                    )
-                                  })
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
         </div>
       )}
 
