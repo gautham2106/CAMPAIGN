@@ -191,12 +191,12 @@ export default function SuperAdminPage() {
   const [allContentDates, setAllContentDates] = useState([])
 
   const [constituencies, setConstituencies] = useState([])
-  const [constAdmins, setConstAdmins] = useState([]) // profiles with role=constituency_admin
+  const [constAdmins, setConstAdmins] = useState([])
   const [allAgents, setAllAgents] = useState([])
   const [allMonitors, setAllMonitors] = useState([])
-  const [contents, setContents] = useState([]) // all content (for content tab)
-  const [dateContents, setDateContents] = useState([]) // content for selectedDate
-  const [allContent, setAllContent] = useState([]) // recent content for calendar
+  const [boothAssignments, setBoothAssignments] = useState([]) // monitor_booth_assignments
+  const [contents, setContents] = useState([])
+  const [dateContents, setDateContents] = useState([])
 
   // Compliance stats indexed: { [agent_id]: { [content_id]: { [platform]: is_checked } } }
   const [logMap, setLogMap] = useState({})
@@ -232,13 +232,14 @@ export default function SuperAdminPage() {
     setError('')
     try {
       const client = supabaseAdmin ?? supabase
-      const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes] = await Promise.all([
+      const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes, boothRes] = await Promise.all([
         client.from('constituencies').select('*').order('name'),
         client.from('digital_agents').select('*'),
-        client.from('profiles').select('id, full_name, email, constituency_id').eq('role', 'monitor'),
+        client.from('profiles').select('id, full_name, email, phone, constituency_id').eq('role', 'monitor'),
         client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin'),
         client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
         client.from('daily_content').select('content_date'),
+        client.from('monitor_booth_assignments').select('*'),
       ])
       if (constRes.error) throw constRes.error
       setConstituencies(constRes.data ?? [])
@@ -246,6 +247,7 @@ export default function SuperAdminPage() {
       setAllMonitors(monitorsRes.data ?? [])
       setConstAdmins(adminsRes.data ?? [])
       setContents(contentRes.data ?? [])
+      setBoothAssignments(boothRes.data ?? [])
       const unique = [...new Set((allDatesRes.data ?? []).map(r => r.content_date))]
       setAllContentDates(unique)
     } catch (e) {
@@ -464,14 +466,22 @@ export default function SuperAdminPage() {
             ))}
           </div>
 
-          {/* Date picker */}
+          {/* Date picker + Refresh */}
           <div>
-            <button onClick={() => setShowCalendar(v => !v)}
-              className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-red-300 transition-colors w-full sm:w-auto">
-              <span>📅</span>
-              <span>{isToday ? `Today — ${displayDate}` : displayDate}</span>
-              <span className="ml-auto text-gray-400 sm:ml-2">{showCalendar ? '▲' : '▼'}</span>
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowCalendar(v => !v)}
+                className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-red-300 transition-colors flex-1 sm:flex-none">
+                <span>📅</span>
+                <span>{isToday ? `Today — ${displayDate}` : displayDate}</span>
+                <span className="ml-auto text-gray-400 sm:ml-2">{showCalendar ? '▲' : '▼'}</span>
+              </button>
+              <button
+                onClick={() => { loadBase(); loadDateCompliance() }}
+                className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-700 hover:border-green-400 hover:text-green-700 transition-colors"
+                title="Refresh data">
+                ↻ Refresh
+              </button>
+            </div>
             {showCalendar && (
               <div className="mt-2 max-w-sm">
                 <MiniCalendar value={selectedDate} onChange={d => { setSelectedDate(d); setShowCalendar(false) }} markedDates={allContentDates} />
@@ -828,14 +838,21 @@ export default function SuperAdminPage() {
       {/* ── FIELD OPS TAB ── */}
       {activeTab === 'Field Ops' && (
         <div className="space-y-3">
-          <p className="text-xs text-gray-500">Drill into any constituency to see monitors and their agents. Orange = invalid FB/IG links.</p>
           {constituencies.map(c => {
             const cMonitors = allMonitors.filter(m => m.constituency_id === c.id)
             const cAgents = allAgents.filter(a => a.constituency_id === c.id)
-            const invalidCount = cAgents.filter(a =>
-              isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false ||
-              !a.fb_url || !a.ig_url
-            ).length
+            const cLinkIssues = cAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url).length
+
+            // Vacant booths in constituency: all booth ranges - agents with booth numbers
+            const cBoothRanges = boothAssignments.filter(b => b.constituency_id === c.id)
+            const cAssignedBooths = new Set(cAgents.map(a => a.booth_number).filter(n => n != null))
+            const cVacantBooths = []
+            for (const r of cBoothRanges) {
+              for (let n = r.booth_from; n <= r.booth_to; n++) {
+                if (!cAssignedBooths.has(n)) cVacantBooths.push(n)
+              }
+            }
+
             const isOpen = expandedConstId === c.id
             return (
               <div key={c.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -844,13 +861,10 @@ export default function SuperAdminPage() {
                   onClick={() => setExpandedConstId(isOpen ? null : c.id)}
                 >
                   <span className="font-semibold text-gray-800">{c.name}</span>
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    {invalidCount > 0 && (
-                      <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">
-                        ⚠ {invalidCount} link issues
-                      </span>
-                    )}
-                    <span>{cMonitors.length} monitors · {cAgents.length} agents</span>
+                  <div className="flex items-center gap-2 text-xs">
+                    {cLinkIssues > 0 && <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">⚠ {cLinkIssues} links</span>}
+                    {cVacantBooths.length > 0 && <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{cVacantBooths.length} vacant</span>}
+                    <span className="text-gray-500">{cMonitors.length} monitors · {cAgents.length} agents</span>
                     <span className="text-gray-400">{isOpen ? '▲' : '▼'}</span>
                   </div>
                 </button>
@@ -859,58 +873,89 @@ export default function SuperAdminPage() {
                   <div className="border-t border-gray-100">
                     {cMonitors.length === 0 ? (
                       <p className="px-4 py-3 text-xs text-gray-400">No monitors in this constituency.</p>
-                    ) : (
-                      cMonitors.map(m => {
-                        const mAgents = cAgents.filter(a => a.assigned_monitor_id === m.id)
-                        const mInvalid = mAgents.filter(a =>
-                          isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false ||
-                          !a.fb_url || !a.ig_url
-                        ).length
-                        return (
-                          <div key={m.id} className="border-b border-gray-50 last:border-0">
-                            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50">
+                    ) : cMonitors.map(m => {
+                      const mAgents = cAgents.filter(a => a.assigned_monitor_id === m.id)
+                      const mLinkIssues = mAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url)
+                      const mRanges = boothAssignments.filter(b => b.monitor_id === m.id)
+                      const mAssignedBooths = new Set(mAgents.map(a => a.booth_number).filter(n => n != null))
+
+                      // Vacant booths for this monitor's ranges
+                      const mVacant = []
+                      for (const r of mRanges) {
+                        for (let n = r.booth_from; n <= r.booth_to; n++) {
+                          if (!mAssignedBooths.has(n)) mVacant.push(n)
+                        }
+                      }
+                      const rangeLabel = mRanges.map(r => `${r.booth_from}–${r.booth_to}`).join(', ')
+
+                      return (
+                        <div key={m.id} className="border-b border-gray-50 last:border-0">
+                          {/* Monitor header */}
+                          <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2">
+                            <div>
                               <p className="text-sm font-semibold text-gray-700">{m.full_name}</p>
-                              <div className="flex items-center gap-2 text-xs text-gray-400">
-                                {mInvalid > 0 && <span className="text-orange-600 font-semibold">⚠ {mInvalid}</span>}
-                                <span>{mAgents.length} agents</span>
+                              {rangeLabel && <p className="text-xs text-indigo-500 mt-0.5">Booths: {rangeLabel}</p>}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs shrink-0">
+                              {mLinkIssues.length > 0 && <span className="bg-orange-100 text-orange-700 font-semibold px-1.5 py-0.5 rounded">⚠ {mLinkIssues.length} links</span>}
+                              {mVacant.length > 0 && <span className="bg-red-100 text-red-700 font-semibold px-1.5 py-0.5 rounded">{mVacant.length} vacant</span>}
+                              <span className="text-gray-400">{mAgents.length} agents</span>
+                            </div>
+                          </div>
+
+                          {/* Vacant booths list */}
+                          {mVacant.length > 0 && (
+                            <div className="px-4 py-2 border-b border-gray-50">
+                              <p className="text-xs font-semibold text-red-600 mb-1">Vacant booths ({mVacant.length})</p>
+                              <div className="flex flex-wrap gap-1">
+                                {mVacant.map(n => (
+                                  <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5">#{n}</span>
+                                ))}
                               </div>
                             </div>
-                            {mAgents.length > 0 && (
-                              <div className="px-4 py-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
-                                {mAgents.map(a => {
-                                  const fbBad = isValidLink(a.fb_url) === false || !a.fb_url
-                                  const igBad = isValidLink(a.ig_url) === false || !a.ig_url
-                                  return (
-                                    <div key={a.id} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 ${(fbBad || igBad) ? 'bg-orange-50' : 'bg-white'}`}>
-                                      {a.booth_number != null && (
-                                        <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>
-                                      )}
-                                      <span className="text-gray-700 truncate flex-1">{a.name}</span>
-                                      {!a.fb_url
-                                        ? <span className="text-gray-300 shrink-0">FB–</span>
-                                        : isValidLink(a.fb_url) === false
-                                        ? <span className="text-orange-500 shrink-0" title={a.fb_url}>⚠FB</span>
-                                        : <span className="text-blue-500 shrink-0">FB✓</span>
-                                      }
-                                      {!a.ig_url
-                                        ? <span className="text-gray-300 shrink-0">IG–</span>
-                                        : isValidLink(a.ig_url) === false
-                                        ? <span className="text-pink-500 shrink-0" title={a.ig_url}>⚠IG</span>
-                                        : <span className="text-pink-500 shrink-0">IG✓</span>
-                                      }
-                                    </div>
-                                  )
-                                })}
+                          )}
+
+                          {/* Link issues list */}
+                          {mLinkIssues.length > 0 && (
+                            <div className="px-4 py-2 border-b border-gray-50">
+                              <p className="text-xs font-semibold text-orange-600 mb-1">Link issues ({mLinkIssues.length})</p>
+                              <div className="flex flex-wrap gap-1">
+                                {mLinkIssues.map(a => (
+                                  <span key={a.id} className="text-xs bg-orange-50 text-orange-700 border border-orange-200 rounded px-1.5 py-0.5">
+                                    {a.booth_number != null ? `#${a.booth_number} ` : ''}{a.name}
+                                    {(!a.fb_url || isValidLink(a.fb_url) === false) ? ' FB' : ''}
+                                    {(!a.ig_url || isValidLink(a.ig_url) === false) ? ' IG' : ''}
+                                  </span>
+                                ))}
                               </div>
-                            )}
-                          </div>
-                        )
-                      })
-                    )}
+                            </div>
+                          )}
+
+                          {/* All agents */}
+                          {mAgents.length > 0 && (
+                            <div className="px-4 py-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
+                              {mAgents.sort((a, b) => (a.booth_number ?? 0) - (b.booth_number ?? 0)).map(a => {
+                                const fbBad = isValidLink(a.fb_url) === false || !a.fb_url
+                                const igBad = isValidLink(a.ig_url) === false || !a.ig_url
+                                return (
+                                  <div key={a.id} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 ${(fbBad || igBad) ? 'bg-orange-50' : 'bg-white'}`}>
+                                    {a.booth_number != null && <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>}
+                                    <span className="text-gray-700 truncate flex-1">{a.name}</span>
+                                    <span className={fbBad ? 'text-orange-500 shrink-0' : 'text-blue-400 shrink-0'}>{fbBad ? '⚠FB' : 'FB✓'}</span>
+                                    <span className={igBad ? 'text-orange-500 shrink-0' : 'text-pink-400 shrink-0'}>{igBad ? '⚠IG' : 'IG✓'}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+
                     {/* Unassigned agents */}
                     {cAgents.filter(a => !a.assigned_monitor_id).length > 0 && (
-                      <div className="border-t border-gray-100 px-4 py-2">
-                        <p className="text-xs text-gray-400 font-semibold mb-1">Unassigned ({cAgents.filter(a => !a.assigned_monitor_id).length})</p>
+                      <div className="px-4 py-2 border-t border-gray-100">
+                        <p className="text-xs text-gray-500 font-semibold mb-1">Unassigned agents ({cAgents.filter(a => !a.assigned_monitor_id).length})</p>
                         <div className="flex flex-wrap gap-1">
                           {cAgents.filter(a => !a.assigned_monitor_id).map(a => (
                             <span key={a.id} className="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">
