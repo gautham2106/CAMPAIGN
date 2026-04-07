@@ -225,7 +225,7 @@ export default function SuperAdminPage() {
   const [savingContent, setSavingContent] = useState(false)
 
   useEffect(() => { loadBase() }, [])
-  useEffect(() => { if (allAgents.length) loadDateCompliance() }, [selectedDate, allAgents])
+  useEffect(() => { loadDateCompliance() }, [selectedDate])
 
   async function loadBase() {
     setLoading(true)
@@ -241,8 +241,7 @@ export default function SuperAdminPage() {
         client.from('daily_content').select('content_date'),
       ])
       if (constRes.error) throw constRes.error
-
-setConstituencies(constRes.data ?? [])
+      setConstituencies(constRes.data ?? [])
       setAllAgents(agentsRes.data ?? [])
       setAllMonitors(monitorsRes.data ?? [])
       setConstAdmins(adminsRes.data ?? [])
@@ -259,7 +258,8 @@ setConstituencies(constRes.data ?? [])
   async function loadDateCompliance() {
     setError('')
     try {
-      const { data: dc, error: ce } = await supabase
+      const client = supabaseAdmin ?? supabase
+      const { data: dc, error: ce } = await client
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
@@ -267,9 +267,9 @@ setConstituencies(constRes.data ?? [])
       if (ce) throw ce
       setDateContents(dc ?? [])
 
-      if (!dc?.length || !allAgents.length) { setLogMap({}); return }
+      if (!dc?.length) { setLogMap({}); return }
 
-      const { data: logs, error: le } = await supabase
+      const { data: logs, error: le } = await client
         .from('compliance_logs')
         .select('*')
         .in('content_id', dc.map(c => c.id))
@@ -287,11 +287,17 @@ setConstituencies(constRes.data ?? [])
     }
   }
 
-  // Compute stats for a set of agent IDs on selectedDate, optionally filtered to one content
-  function computeStats(agentIds, filterContentId = null) {
+  // Compute stats for a set of agent IDs on selectedDate
+  // constId: filter content to only items targeted at this constituency
+  // filterContentId: further narrow to a single content item
+  function computeStats(agentIds, filterContentId = null, constId = null) {
+    // Filter date content to what's relevant for this constituency
+    const constContents = constId
+      ? dateContents.filter(c => !c.target_constituencies || c.target_constituencies.includes(constId))
+      : dateContents
     const contentIds = filterContentId
-      ? (dateContents.find(c => c.id === filterContentId) ? [filterContentId] : [])
-      : dateContents.map(c => c.id)
+      ? (constContents.find(c => c.id === filterContentId) ? [filterContentId] : [])
+      : constContents.map(c => c.id)
     const total = agentIds.length
     const contentCount = contentIds.length
 
@@ -598,7 +604,7 @@ setConstituencies(constRes.data ?? [])
                 const constName = admin.constituencies?.name ?? '—'
                 const adminAgentIds = allAgents.filter(a => a.constituency_id === constId).map(a => a.id)
                 const monitorCount = allMonitors.filter(m => m.constituency_id === constId).length
-                const s = computeStats(adminAgentIds)
+                const s = computeStats(adminAgentIds, null, constId)
 
                 // Per-monitor stats for this admin's constituency
                 const adminsMonitors = allMonitors.filter(m => m.constituency_id === constId)
@@ -628,33 +634,36 @@ setConstituencies(constRes.data ?? [])
                     </div>
 
                     {/* Platform breakdown */}
-                    {dateContents.length > 0 && adminAgentIds.length > 0 ? (
-                      <div className="space-y-1.5 mb-4 pb-4 border-b border-gray-100">
-                        {PLATFORMS.map(p => (
-                          <div key={p} className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 w-8">{P_SHORT[p]}</span>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${s.platform[p] >= 80 ? 'bg-green-500' : s.platform[p] >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
-                                    style={{ width: `${s.platform[p]}%` }} />
+                    {(() => {
+                      const constContents = dateContents.filter(c => !c.target_constituencies || c.target_constituencies.includes(constId))
+                      return constContents.length > 0 && adminAgentIds.length > 0 ? (
+                        <div className="space-y-1.5 mb-4 pb-4 border-b border-gray-100">
+                          {PLATFORMS.map(p => (
+                            <div key={p} className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500 w-8">{P_SHORT[p]}</span>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full ${s.platform[p] >= 80 ? 'bg-green-500' : s.platform[p] >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                                      style={{ width: `${s.platform[p]}%` }} />
+                                  </div>
+                                  <span className={`text-xs font-bold w-8 text-right ${s.platform[p] >= 80 ? 'text-green-700' : s.platform[p] >= 50 ? 'text-yellow-700' : 'text-red-600'}`}>
+                                    {s.platform[p]}%
+                                  </span>
                                 </div>
-                                <span className={`text-xs font-bold w-8 text-right ${s.platform[p] >= 80 ? 'text-green-700' : s.platform[p] >= 50 ? 'text-yellow-700' : 'text-red-600'}`}>
-                                  {s.platform[p]}%
-                                </span>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                        <p className="text-xs text-gray-400 mt-1">
-                          {s.done}/{s.total} agents fully verified · {dateContents.length} content item(s)
+                          ))}
+                          <p className="text-xs text-gray-400 mt-1">
+                            {s.done}/{s.total} agents fully verified · {constContents.length} content item(s)
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400 mb-4 pb-4 border-b border-gray-100">
+                          {constContents.length === 0 ? 'No content for this constituency on this date.' : 'No agents in this constituency.'}
                         </p>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 mb-4 pb-4 border-b border-gray-100">
-                        {dateContents.length === 0 ? 'No content on this date.' : 'No agents in this constituency.'}
-                      </p>
-                    )}
+                      )
+                    })()}
 
                     {/* Per-monitor breakdown */}
                     {adminsMonitors.length > 0 && dateContents.length > 0 && (
@@ -663,7 +672,7 @@ setConstituencies(constRes.data ?? [])
                         <div className="space-y-2">
                           {adminsMonitors.map(mon => {
                             const monAgentIds = allAgents.filter(a => a.assigned_monitor_id === mon.id).map(a => a.id)
-                            const ms = computeStats(monAgentIds)
+                            const ms = computeStats(monAgentIds, null, constId)
                             return (
                               <div key={mon.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-gray-50">
                                 <div className="flex-1 min-w-0">
