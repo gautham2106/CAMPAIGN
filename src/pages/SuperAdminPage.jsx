@@ -480,6 +480,12 @@ export default function SuperAdminPage() {
             )}
           </div>
 
+          {/* Debug info — remove after fixing */}
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs font-mono text-yellow-800 space-y-0.5">
+            <p>🔍 Debug: agents={allAgents.length} | content={dateContents.length} | logs={Object.keys(complianceStats).length} agents with logs | adminClient={supabaseAdmin ? 'YES' : 'NO (using anon)'}</p>
+            <p>complianceStats keys: {JSON.stringify(Object.keys(complianceStats).slice(0, 3))}...</p>
+          </div>
+
           {/* Overall platform summary */}
           {dateContents.length > 0 && allAgents.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 p-4">
