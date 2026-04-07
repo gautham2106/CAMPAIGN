@@ -243,6 +243,7 @@ export default function SuperAdminPage() {
       ])
       if (constRes.error) throw constRes.error
 
+      console.log('[SuperAdmin] loadBase — agents:', agentsRes.data?.length ?? 0, '| monitors:', monitorsRes.data?.length ?? 0, '| agents error:', agentsRes.error?.message)
       setConstituencies(constRes.data ?? [])
       setAllAgents(agentsRes.data ?? [])
       setAllMonitors(monitorsRes.data ?? [])
@@ -261,20 +262,23 @@ export default function SuperAdminPage() {
     setError('')
     try {
       const client = supabaseAdmin ?? supabase
-      const { data: dc } = await client
+      console.log('[SuperAdmin] loadDateCompliance — date:', selectedDate, '| allAgents:', allAgents.length, '| usingAdmin:', !!supabaseAdmin)
+      const { data: dc, error: dcErr } = await client
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
         .order('created_at')
+      console.log('[SuperAdmin] daily_content rows:', dc?.length ?? 0, dcErr ? '| ERROR:' + dcErr.message : '')
       setDateContents(dc ?? [])
 
       if (!dc?.length || !allAgents.length) { setComplianceStats({}); return }
 
-      const { data: logs } = await client
+      const { data: logs, error: logsErr } = await client
         .from('compliance_logs')
         .select('agent_id, content_id, platform, is_checked')
         .in('content_id', dc.map(c => c.id))
         .in('agent_id', allAgents.map(a => a.id))
+      console.log('[SuperAdmin] compliance_logs rows:', logs?.length ?? 0, logsErr ? '| ERROR:' + logsErr.message : '')
 
       const stats = {}
       for (const log of logs ?? []) {
@@ -282,6 +286,7 @@ export default function SuperAdminPage() {
         if (!stats[log.agent_id][log.content_id]) stats[log.agent_id][log.content_id] = {}
         stats[log.agent_id][log.content_id][log.platform] = log.is_checked
       }
+      console.log('[SuperAdmin] complianceStats agents:', Object.keys(stats).length)
       setComplianceStats(stats)
     } catch (e) {
       setError(e.message)
