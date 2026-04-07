@@ -274,7 +274,6 @@ setConstituencies(constRes.data ?? [])
         .from('compliance_logs')
         .select('*')
         .in('content_id', dc.map(c => c.id))
-        .in('agent_id', allAgents.map(a => a.id))
       if (le) throw le
 
       const map = {}
