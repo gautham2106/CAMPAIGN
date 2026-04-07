@@ -87,7 +87,21 @@ function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
     </div>
   )
 }
-
+async function fetchAllRows(client, table, queryFn = q => q) {
+  const pageSize = 1000
+  let from = 0
+  let allRows = []
+  while (true) {
+    const { data, error } = await queryFn(
+      client.from(table).select('*')
+    ).range(from, from + pageSize - 1)
+    if (error) throw error
+    allRows = [...allRows, ...(data ?? [])]
+    if ((data?.length ?? 0) < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
 const TODAY = getTodayIST()
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
 const P_LABEL = { whatsapp: 'WhatsApp', facebook: 'Facebook', instagram: 'Instagram' }
@@ -248,25 +262,25 @@ export default function SuperAdminPage() {
     try {
       const client = supabaseAdmin ?? supabase
       const [constRes, agentsRes, monitorsRes, adminsRes, contentRes, allDatesRes, boothRes, placesRes, constFORes, monFORes] = await Promise.all([
-        client.from('constituencies').select('*').order('name'),
-        client.from('digital_agents').select('*').limit(50000),
-        client.from('profiles').select('id, full_name, email, phone, constituency_id').eq('role', 'monitor').limit(5000),
-        client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin').limit(5000),
-        client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
-        client.from('daily_content').select('content_date').limit(10000),
-        client.from('monitor_booth_assignments').select('*').limit(10000),
-        client.from('places').select('*').limit(10000),
-        client.from('constituency_field_ops_stats').select('*'),
-        client.from('monitor_field_ops_stats').select('*'),
-      ])
+      client.from('constituencies').select('*').order('name'),
+      fetchAllRows(client, 'digital_agents'),
+      fetchAllRows(client, 'profiles', q => q.select('id, full_name, email, phone, constituency_id').eq('role', 'monitor')),
+      client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin').limit(5000),
+      client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
+      client.from('daily_content').select('content_date').limit(10000),
+      fetchAllRows(client, 'monitor_booth_assignments'),
+      fetchAllRows(client, 'places'),
+      client.from('constituency_field_ops_stats').select('*'),
+      client.from('monitor_field_ops_stats').select('*'),
+    ])
       if (constRes.error) throw constRes.error
       setConstituencies(constRes.data ?? [])
-      setAllAgents(agentsRes.data ?? [])
-      setAllMonitors(monitorsRes.data ?? [])
+      setAllAgents(agentsRes ?? [])
+      setAllMonitors(monitorsRes ?? [])
       setConstAdmins(adminsRes.data ?? [])
       setContents(contentRes.data ?? [])
-      setBoothAssignments(boothRes.data ?? [])
-      setPlaces(placesRes.data ?? [])
+      setBoothAssignments(boothRes ?? [])
+      setPlaces(placesRes ?? [])
       const unique = [...new Set((allDatesRes.data ?? []).map(r => r.content_date))]
       setAllContentDates(unique)
 
