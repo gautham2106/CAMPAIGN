@@ -1184,38 +1184,29 @@ export default function ConstituencyAdminPage() {
 
           {/* ── Compliance check panel ── */}
           {checkMode && (
-            <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-2.5">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-xs font-bold text-violet-800">Compliance Check</span>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  max={TODAY}
-                  onChange={e => setSelectedDate(e.target.value)}
-                  className="px-2.5 py-1 border border-violet-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
-                />
-              </div>
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
+              <span className="text-xs font-bold text-violet-800 shrink-0">Check Date:</span>
+              <input
+                type="date" value={selectedDate} max={TODAY}
+                onChange={e => { setSelectedDate(e.target.value); setCheckContentId('') }}
+                className="px-2.5 py-1.5 border border-violet-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+              />
               {contents.length > 0 ? (
-                <div className="flex gap-1.5 flex-wrap">
-                  <button onClick={() => setCheckContentId('')}
-                    className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                      !checkContentId ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:border-violet-500'
-                    }`}>
-                    All content
-                  </button>
-                  {contents.map(c => (
-                    <button key={c.id} onClick={() => setCheckContentId(checkContentId === c.id ? '' : c.id)}
-                      className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                        checkContentId === c.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:border-violet-500'
-                      }`}>
-                      {c.title}
-                    </button>
-                  ))}
-                </div>
+                <>
+                  <span className="text-xs font-bold text-violet-800 shrink-0">Content:</span>
+                  <select value={checkContentId} onChange={e => setCheckContentId(e.target.value)}
+                    className="flex-1 min-w-[180px] px-2.5 py-1.5 border border-violet-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                    <option value="">— select content —</option>
+                    {contents.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                  {checkContentId
+                    ? <span className="text-xs text-violet-600">Green = posted ✓ · Red = not posted · Click to toggle</span>
+                    : <span className="text-xs text-violet-400">Select a content item above</span>
+                  }
+                </>
               ) : (
-                <p className="text-xs text-violet-500">No content found for {displayDate} — change the date above.</p>
+                <span className="text-xs text-violet-500">No content for {displayDate} — change date</span>
               )}
-              <p className="text-xs text-violet-600">Click WA / FB / IG on each agent to toggle. Green = checked, gray = not checked.</p>
             </div>
           )}
 
@@ -1270,44 +1261,6 @@ export default function ConstituencyAdminPage() {
             </div>
           )}
 
-          {/* Place info header when filtered */}
-          {filterPlaceId && (() => {
-            const pl = places.find(p => p.id === filterPlaceId)
-            if (!pl) return null
-            const placeAgents = agents.filter(a => a.booth_number != null && a.booth_number >= pl.booth_from && a.booth_number <= pl.booth_to)
-            // Group by monitor
-            const monGroups = {}
-            for (const a of placeAgents) {
-              const mid = a.assigned_monitor_id ?? '__none'
-              if (!monGroups[mid]) monGroups[mid] = []
-              monGroups[mid].push(a)
-            }
-            return (
-              <div className="bg-indigo-950 rounded-xl p-4 text-white">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="font-bold text-indigo-100">{pl.name}</p>
-                    <p className="text-xs text-indigo-400 mt-0.5">Booths {pl.booth_from}–{pl.booth_to}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-bold text-white">{placeAgents.length}</p>
-                    <p className="text-xs text-indigo-400">agents</p>
-                  </div>
-                </div>
-                <div className="space-y-1 border-t border-indigo-900 pt-2">
-                  {Object.entries(monGroups).map(([mid, mAgents]) => {
-                    const mon = monitors.find(m => m.id === mid)
-                    return (
-                      <div key={mid} className="flex items-center justify-between text-xs">
-                        <span className="text-indigo-300">{mon?.full_name ?? '(Unassigned)'}</span>
-                        <span className="text-indigo-100 font-semibold">{mAgents.length} agents</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })()}
 
           {/* ── Monitor filter chips ── */}
           <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
@@ -1528,88 +1481,200 @@ export default function ConstituencyAdminPage() {
             </details>
           )}
 
-          {/* Agent list */}
-          <div className="space-y-1.5">
-            {filteredAgents.map(a => {
-              const mon = monitors.find(m => m.id === a.assigned_monitor_id)
-              const isEditing = editingAgentId === a.id
-              const isSelected = selectedAgentIds.has(a.id)
+          {/* ── Agent list — place-grouped OR flat ── */}
+          {filterPlaceId ? (
+            /* ── Place view: monitor sections with agent rows ── */
+            <div className="space-y-3">
+              {(() => {
+                const pl = places.find(p => p.id === filterPlaceId)
+                const groups = []
+                for (const m of monitors) {
+                  const mAgents = filteredAgents.filter(a => a.assigned_monitor_id === m.id)
+                    .sort((a, b) => (a.booth_number ?? 9999) - (b.booth_number ?? 9999))
+                  if (mAgents.length) groups.push({ m, mAgents })
+                }
+                const unassignedInPlace = filteredAgents.filter(a => !a.assigned_monitor_id)
+                  .sort((a, b) => (a.booth_number ?? 9999) - (b.booth_number ?? 9999))
+                if (unassignedInPlace.length) groups.push({ m: null, mAgents: unassignedInPlace })
 
-              if (isEditing) {
                 return (
-                  <div key={a.id} className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="col-span-2">
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Name</label>
-                        <input type="text" value={editAgentValues.name}
-                          onChange={e => setEditAgentValues(v => ({ ...v, name: e.target.value }))}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
+                  <>
+                    {pl && (
+                      <div className="flex items-center justify-between px-1">
+                        <p className="text-sm font-bold text-indigo-700">{pl.name} <span className="font-normal text-indigo-400">· Booths {pl.booth_from}–{pl.booth_to}</span></p>
+                        <span className="text-xs text-indigo-500">{filteredAgents.length} agents</span>
                       </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Booth #</label>
-                        <input type="number" value={editAgentValues.booth_number}
-                          onChange={e => setEditAgentValues(v => ({ ...v, booth_number: e.target.value }))}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
+                    )}
+                    {groups.map(({ m, mAgents }) => (
+                      <div key={m?.id ?? '__unassigned'} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                        {/* Monitor header */}
+                        <div className="px-4 py-2.5 bg-zinc-900 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-white text-sm">{m?.full_name ?? '(Unassigned)'}</span>
+                            {m?.phone && <span className="text-xs text-zinc-400">{m.phone}</span>}
+                          </div>
+                          <span className="text-xs text-zinc-400">{mAgents.length} agents</span>
+                        </div>
+                        {/* Agent rows */}
+                        <div className="divide-y divide-gray-100">
+                          {mAgents.map(a => {
+                            if (editingAgentId === a.id) {
+                              return (
+                                <div key={a.id} className="bg-amber-50 border-amber-200 p-3 space-y-2">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="col-span-2">
+                                      <input type="text" value={editAgentValues.name}
+                                        onChange={e => setEditAgentValues(v => ({ ...v, name: e.target.value }))}
+                                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                                        placeholder="Name" />
+                                    </div>
+                                    <input type="number" value={editAgentValues.booth_number}
+                                      onChange={e => setEditAgentValues(v => ({ ...v, booth_number: e.target.value }))}
+                                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none" placeholder="Booth #" />
+                                    <input type="tel" value={editAgentValues.phone}
+                                      onChange={e => setEditAgentValues(v => ({ ...v, phone: e.target.value }))}
+                                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none" placeholder="Phone" />
+                                    <input type="text" value={editAgentValues.fb_url}
+                                      onChange={e => setEditAgentValues(v => ({ ...v, fb_url: e.target.value }))}
+                                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none col-span-2" placeholder="FB URL" />
+                                    <input type="text" value={editAgentValues.ig_url}
+                                      onChange={e => setEditAgentValues(v => ({ ...v, ig_url: e.target.value }))}
+                                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none col-span-2" placeholder="IG URL" />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button onClick={() => setEditingAgentId(null)} className="flex-1 border border-slate-300 text-slate-600 text-xs py-1.5 rounded-lg">Cancel</button>
+                                    <button onClick={() => saveEditAgent(a.id)} disabled={savingEdit} className="flex-1 bg-red-600 text-white text-xs font-semibold py-1.5 rounded-lg">{savingEdit ? '…' : 'Save'}</button>
+                                  </div>
+                                </div>
+                              )
+                            }
+                            const fbOk = isValidLink(a.fb_url)
+                            const igOk = isValidLink(a.ig_url)
+                            return (
+                              <div key={a.id} className="px-4 py-2.5 flex items-center gap-3">
+                                <span className="text-xs font-bold text-indigo-600 w-10 shrink-0 text-right">#{a.booth_number ?? '—'}</span>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
+                                  {a.phone && <p className="text-xs text-gray-400">{a.phone}</p>}
+                                </div>
+                                {/* Link status */}
+                                <div className="flex items-center gap-1.5 shrink-0 text-xs">
+                                  {a.fb_url
+                                    ? <a href={fbOk ? a.fb_url : undefined} target="_blank" rel="noopener noreferrer"
+                                        className={fbOk ? 'text-blue-400' : 'text-orange-400'}>
+                                        {fbOk ? 'FB✓' : '⚠FB'}
+                                      </a>
+                                    : <span className="text-gray-200">FB–</span>
+                                  }
+                                  {a.ig_url
+                                    ? <a href={igOk ? a.ig_url : undefined} target="_blank" rel="noopener noreferrer"
+                                        className={igOk ? 'text-pink-400' : 'text-orange-400'}>
+                                        {igOk ? 'IG✓' : '⚠IG'}
+                                      </a>
+                                    : <span className="text-gray-200">IG–</span>
+                                  }
+                                </div>
+                                {/* Compliance toggles */}
+                                {checkMode && checkContentId && (
+                                  <div className="flex gap-1 shrink-0">
+                                    {[{p:'whatsapp',l:'WA'},{p:'facebook',l:'FB'},{p:'instagram',l:'IG'}].map(({p,l}) => {
+                                      const ok = logMap[a.id]?.[checkContentId]?.[p]?.is_checked ?? false
+                                      return (
+                                        <button key={p} onClick={() => handleAgentToggle(a.id, checkContentId, p)}
+                                          disabled={!!savingToggle}
+                                          className={`text-xs font-bold px-2 py-0.5 rounded transition-colors ${
+                                            savingToggle === `${a.id}-${checkContentId}-${p}` ? 'opacity-40' :
+                                            ok ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-500'
+                                          }`}>
+                                          {l}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                                <button onClick={() => startEditAgent(a)} className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100">✏️</button>
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">
-                          Phone
-                          {editAgentValues.phone && isValidPhone(editAgentValues.phone) === false && (
-                            <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must be 10 digits</span>
-                          )}
-                        </label>
-                        <input type="tel" value={editAgentValues.phone}
-                          onChange={e => setEditAgentValues(v => ({ ...v, phone: e.target.value }))}
-                          className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
-                            editAgentValues.phone && isValidPhone(editAgentValues.phone) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
-                          }`}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Facebook URL</label>
-                        <input type="text" value={editAgentValues.fb_url}
-                          onChange={e => setEditAgentValues(v => ({ ...v, fb_url: e.target.value }))}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                          placeholder="https://fb.com/… or www.fb.com/…"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Instagram URL</label>
-                        <input type="text" value={editAgentValues.ig_url}
-                          onChange={e => setEditAgentValues(v => ({ ...v, ig_url: e.target.value }))}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                          placeholder="https://instagram.com/… or www.instagram.com/…"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                      <button onClick={() => setEditingAgentId(null)}
-                        className="flex-1 border border-slate-300 text-slate-600 text-xs font-medium py-1.5 rounded-lg hover:bg-slate-50">
-                        Cancel
-                      </button>
-                      <button onClick={() => saveEditAgent(a.id)} disabled={savingEdit || !editAgentValues.name.trim()}
-                        className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-semibold py-1.5 rounded-lg">
-                        {savingEdit ? 'Saving…' : 'Save'}
-                      </button>
-                    </div>
-                  </div>
+                    ))}
+                    {groups.length === 0 && (
+                      <p className="text-center py-8 text-gray-400 text-sm">No agents in this place.</p>
+                    )}
+                  </>
                 )
-              }
+              })()}
+            </div>
+          ) : (
+            /* ── Normal flat list ── */
+            <div className="space-y-1.5">
+              {filteredAgents.map(a => {
+                const mon = monitors.find(m => m.id === a.assigned_monitor_id)
+                const isEditing = editingAgentId === a.id
+                const isSelected = selectedAgentIds.has(a.id)
 
-              return (
-                <div key={a.id} className={`bg-white rounded-xl border p-3 transition-colors ${
-                  checkMode ? 'border-violet-200' : isSelected ? 'border-red-300 bg-red-50' : 'border-gray-200'
-                }`}>
-                  {/* Main agent row */}
-                  <div className="flex items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleSelectAgent(a.id)}
-                      className="w-4 h-4 rounded accent-red-600 shrink-0"
-                    />
+                if (isEditing) {
+                  return (
+                    <div key={a.id} className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Name</label>
+                          <input type="text" value={editAgentValues.name}
+                            onChange={e => setEditAgentValues(v => ({ ...v, name: e.target.value }))}
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Booth #</label>
+                          <input type="number" value={editAgentValues.booth_number}
+                            onChange={e => setEditAgentValues(v => ({ ...v, booth_number: e.target.value }))}
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Phone
+                            {editAgentValues.phone && isValidPhone(editAgentValues.phone) === false && (
+                              <span className="ml-2 text-orange-500 normal-case font-normal">⚠ must be 10 digits</span>
+                            )}
+                          </label>
+                          <input type="tel" value={editAgentValues.phone}
+                            onChange={e => setEditAgentValues(v => ({ ...v, phone: e.target.value }))}
+                            className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                              editAgentValues.phone && isValidPhone(editAgentValues.phone) === false ? 'border-orange-400 bg-orange-50' : 'border-slate-300'
+                            }`} />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Facebook URL</label>
+                          <input type="text" value={editAgentValues.fb_url}
+                            onChange={e => setEditAgentValues(v => ({ ...v, fb_url: e.target.value }))}
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                            placeholder="https://fb.com/…" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Instagram URL</label>
+                          <input type="text" value={editAgentValues.ig_url}
+                            onChange={e => setEditAgentValues(v => ({ ...v, ig_url: e.target.value }))}
+                            className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                            placeholder="https://instagram.com/…" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => setEditingAgentId(null)}
+                          className="flex-1 border border-slate-300 text-slate-600 text-xs font-medium py-1.5 rounded-lg hover:bg-slate-50">Cancel</button>
+                        <button onClick={() => saveEditAgent(a.id)} disabled={savingEdit || !editAgentValues.name.trim()}
+                          className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-semibold py-1.5 rounded-lg">
+                          {savingEdit ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div key={a.id} className={`bg-white rounded-xl border p-3 flex items-center gap-2.5 transition-colors ${
+                    isSelected ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                  }`}>
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelectAgent(a.id)}
+                      className="w-4 h-4 rounded accent-red-600 shrink-0" />
                     <span className="text-xs font-bold bg-zinc-100 text-zinc-700 px-2 py-1 rounded-lg shrink-0 min-w-[2.5rem] text-center">
                       #{a.booth_number ?? '—'}
                     </span>
@@ -1619,114 +1684,80 @@ export default function ConstituencyAdminPage() {
                         {a.phone && (
                           <span className="text-xs text-gray-400 inline-flex items-center gap-1">
                             {a.phone}
-                            {isValidPhone(a.phone) === false && (
-                              <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" title="Invalid phone — must be 10 digits" />
-                            )}
+                            {isValidPhone(a.phone) === false && <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />}
                           </span>
                         )}
                         {!filterMonitorId && (mon
                           ? <span className="text-xs text-slate-500">{mon.full_name}</span>
                           : <span className="text-xs text-orange-500">Unassigned</span>
                         )}
-                        {a.created_by && monitors.find(m => m.id === a.created_by) && (
-                          <span className="text-xs text-indigo-400">by {monitors.find(m => m.id === a.created_by)?.full_name}</span>
-                        )}
                         {a.reassigned_from && (
                           <span className="text-xs text-amber-600 font-medium">
-                            ↩ from {monitors.find(m => m.id === a.reassigned_from)?.full_name ?? 'prev. monitor'}
+                            ↩ {monitors.find(m => m.id === a.reassigned_from)?.full_name ?? 'prev.'}
                           </span>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {a.fb_url
-                        ? <a href={isValidLink(a.fb_url) ? a.fb_url : undefined} target="_blank" rel="noopener noreferrer"
-                            className={`text-xs px-1 ${isValidLink(a.fb_url) ? 'text-blue-400 hover:text-blue-600' : 'text-orange-400'}`}
-                            title={isValidLink(a.fb_url) ? undefined : 'Invalid URL'}>
-                            {isValidLink(a.fb_url) ? 'FB' : '⚠FB'}
-                          </a>
-                        : <span className="text-xs text-gray-200">FB–</span>
-                      }
-                      {a.ig_url
-                        ? <a href={isValidLink(a.ig_url) ? a.ig_url : undefined} target="_blank" rel="noopener noreferrer"
-                            className={`text-xs px-1 ${isValidLink(a.ig_url) ? 'text-pink-400 hover:text-pink-600' : 'text-orange-400'}`}
-                            title={isValidLink(a.ig_url) ? undefined : 'Invalid URL'}>
-                            {isValidLink(a.ig_url) ? 'IG' : '⚠IG'}
-                          </a>
-                        : <span className="text-xs text-gray-200">IG–</span>
-                      }
+                    <div className="flex items-center gap-1 shrink-0">
+                      {/* Compliance toggles — shown first in check mode */}
+                      {checkMode && checkContentId && (
+                        <>
+                          {[{p:'whatsapp',l:'WA'},{p:'facebook',l:'FB'},{p:'instagram',l:'IG'}].map(({p,l}) => {
+                            const ok = logMap[a.id]?.[checkContentId]?.[p]?.is_checked ?? false
+                            return (
+                              <button key={p} onClick={() => handleAgentToggle(a.id, checkContentId, p)}
+                                disabled={!!savingToggle}
+                                className={`text-xs font-bold px-2 py-1 rounded-lg border transition-colors ${
+                                  savingToggle === `${a.id}-${checkContentId}-${p}` ? 'opacity-40' :
+                                  ok ? 'bg-green-100 text-green-700 border-green-300' : 'bg-red-50 text-red-400 border-red-200'
+                                }`}>
+                                {l}
+                              </button>
+                            )
+                          })}
+                          <span className="w-px h-4 bg-gray-200 mx-0.5" />
+                        </>
+                      )}
+                      {/* Link URLs */}
+                      {!checkMode && (
+                        <>
+                          {a.fb_url
+                            ? <a href={isValidLink(a.fb_url) ? a.fb_url : undefined} target="_blank" rel="noopener noreferrer"
+                                className={`text-xs px-1 ${isValidLink(a.fb_url) ? 'text-blue-400 hover:text-blue-600' : 'text-orange-400'}`}>
+                                {isValidLink(a.fb_url) ? 'FB' : '⚠FB'}
+                              </a>
+                            : <span className="text-xs text-gray-200">FB–</span>
+                          }
+                          {a.ig_url
+                            ? <a href={isValidLink(a.ig_url) ? a.ig_url : undefined} target="_blank" rel="noopener noreferrer"
+                                className={`text-xs px-1 ${isValidLink(a.ig_url) ? 'text-pink-400 hover:text-pink-600' : 'text-orange-400'}`}>
+                                {isValidLink(a.ig_url) ? 'IG' : '⚠IG'}
+                              </a>
+                            : <span className="text-xs text-gray-200">IG–</span>
+                          }
+                        </>
+                      )}
                       <button onClick={() => startEditAgent(a)}
-                        className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100 transition-colors"
-                        title="Edit">✏️</button>
-                      <button
-                        onClick={() => handleDeleteAgent(a.id, a.name)}
-                        disabled={deletingAgentId === a.id}
-                        className="text-red-400 hover:text-red-600 text-xs px-1.5 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-40"
-                        title="Delete">
+                        className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100 transition-colors">✏️</button>
+                      <button onClick={() => handleDeleteAgent(a.id, a.name)} disabled={deletingAgentId === a.id}
+                        className="text-red-400 hover:text-red-600 text-xs px-1.5 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-40">
                         {deletingAgentId === a.id ? '…' : '✕'}
                       </button>
                     </div>
                   </div>
+                )
+              })}
 
-                  {/* Compliance check toggles — shown only in check mode */}
-                  {checkMode && contents.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-violet-100 space-y-1.5">
-                      {(checkContentId ? contents.filter(c => c.id === checkContentId) : contents).map(c => {
-                        const P_CONFIG = [
-                          { key: 'whatsapp', label: 'WA', color: 'emerald' },
-                          { key: 'facebook', label: 'FB', color: 'blue' },
-                          { key: 'instagram', label: 'IG', color: 'pink' },
-                        ]
-                        return (
-                          <div key={c.id} className="flex items-center gap-2 flex-wrap">
-                            {contents.length > 1 && (
-                              <span className="text-xs text-violet-600 font-medium flex-1 min-w-0 truncate">{c.title}</span>
-                            )}
-                            <div className="flex gap-1.5 shrink-0">
-                              {P_CONFIG.map(({ key: p, label, color }) => {
-                                const checked = logMap[a.id]?.[c.id]?.[p]?.is_checked ?? false
-                                const isSaving = savingToggle === `${a.id}-${c.id}-${p}`
-                                return (
-                                  <button
-                                    key={p}
-                                    onClick={() => handleAgentToggle(a.id, c.id, p)}
-                                    disabled={!!savingToggle}
-                                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition-all ${
-                                      isSaving
-                                        ? 'opacity-50 cursor-wait'
-                                        : checked
-                                          ? color === 'emerald' ? 'bg-emerald-100 text-emerald-700 border-emerald-400'
-                                            : color === 'blue' ? 'bg-blue-100 text-blue-700 border-blue-400'
-                                            : 'bg-pink-100 text-pink-700 border-pink-400'
-                                          : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-violet-300 hover:text-violet-500'
-                                    }`}
-                                    title={`${checked ? 'Uncheck' : 'Check'} ${p}`}
-                                  >
-                                    {label}{checked ? ' ✓' : ''}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
+              {agents.length === 0 && (
+                <div className="text-center py-12 text-gray-400 text-sm bg-white rounded-xl border border-dashed border-gray-200">
+                  No agents yet. Click "Add Agent" or import from CSV.
                 </div>
-              )
-            })}
-
-            {agents.length === 0 && (
-              <div className="text-center py-12 text-gray-400 text-sm bg-white rounded-xl border border-dashed border-gray-200">
-                No agents yet. Click "Add Agent" or import from CSV.
-              </div>
-            )}
-            {agents.length > 0 && filteredAgents.length === 0 && (
-              <div className="text-center py-8 text-gray-400 text-sm">
-                No agents match "{agentSearch}"
-              </div>
-            )}
-          </div>
+              )}
+              {agents.length > 0 && filteredAgents.length === 0 && (
+                <div className="text-center py-8 text-gray-400 text-sm">No agents match the current filters.</div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
