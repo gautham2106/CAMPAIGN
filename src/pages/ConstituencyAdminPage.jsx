@@ -207,6 +207,11 @@ export default function ConstituencyAdminPage() {
   const [agentSearch, setAgentSearch] = useState('')
   const [filterInvalidLinks, setFilterInvalidLinks] = useState(false)
   const [filterMonitorId, setFilterMonitorId] = useState('')
+  const [filterPlaceId, setFilterPlaceId] = useState('')   // '' = all places
+  // Compliance check mode
+  const [checkMode, setCheckMode] = useState(false)
+  const [checkContentId, setCheckContentId] = useState('') // '' = all content for date
+  const [savingToggle, setSavingToggle] = useState(null)   // `${agentId}-${contentId}-${platform}`
   const [boothFrom, setBoothFrom] = useState('')
   const [boothTo, setBoothTo] = useState('')
   const [showBoothFilter, setShowBoothFilter] = useState(false)
@@ -658,6 +663,10 @@ export default function ConstituencyAdminPage() {
   const filteredAgents = agents.filter(a => {
     if (filterMonitorId === 'unassigned' && a.assigned_monitor_id) return false
     if (filterMonitorId && filterMonitorId !== 'unassigned' && a.assigned_monitor_id !== filterMonitorId) return false
+    if (filterPlaceId) {
+      const pl = places.find(p => p.id === filterPlaceId)
+      if (!pl || a.booth_number == null || a.booth_number < pl.booth_from || a.booth_number > pl.booth_to) return false
+    }
     if (boothFilterActive) {
       const b = parseInt(a.booth_number)
       const from = boothFrom !== '' ? parseInt(boothFrom) : -Infinity
@@ -681,6 +690,38 @@ export default function ConstituencyAdminPage() {
   const displayDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-IN', {
     weekday: 'short', day: 'numeric', month: 'short'
   })
+
+  async function handleAgentToggle(agentId, contentId, platform) {
+    const key = `${agentId}-${contentId}-${platform}`
+    setSavingToggle(key)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const existing = logMap[agentId]?.[contentId]?.[platform]
+      const newChecked = !(existing?.is_checked ?? false)
+      if (existing?.id) {
+        await client.from('compliance_logs')
+          .update({ is_checked: newChecked })
+          .eq('id', existing.id)
+        setLogMap(prev => ({
+          ...prev,
+          [agentId]: { ...prev[agentId], [contentId]: { ...prev[agentId]?.[contentId], [platform]: { ...existing, is_checked: newChecked } } },
+        }))
+      } else {
+        const { data, error } = await client.from('compliance_logs')
+          .insert({ agent_id: agentId, content_id: contentId, platform, is_checked: true })
+          .select().single()
+        if (error) throw error
+        setLogMap(prev => ({
+          ...prev,
+          [agentId]: { ...prev[agentId], [contentId]: { ...prev[agentId]?.[contentId], [platform]: data } },
+        }))
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSavingToggle(null)
+    }
+  }
 
   function handleExport() {
     exportMasterReport({
@@ -1115,6 +1156,15 @@ export default function ConstituencyAdminPage() {
                 />
               </div>
             </div>
+            {/* Check Compliance toggle */}
+            <button
+              onClick={() => { setCheckMode(v => !v); if (!checkMode) loadDateData() }}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                checkMode ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-400'
+              }`}
+            >
+              ✅ {checkMode ? 'Exit Check' : 'Check Compliance'}
+            </button>
             {/* Booth filter toggle */}
             <button
               onClick={() => { setShowBoothFilter(v => !v); if (showBoothFilter) { setBoothFrom(''); setBoothTo('') } }}
@@ -1131,6 +1181,43 @@ export default function ConstituencyAdminPage() {
               )}
             </button>
           </div>
+
+          {/* ── Compliance check panel ── */}
+          {checkMode && (
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-2.5">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xs font-bold text-violet-800">Compliance Check</span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  max={TODAY}
+                  onChange={e => setSelectedDate(e.target.value)}
+                  className="px-2.5 py-1 border border-violet-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+                />
+              </div>
+              {contents.length > 0 ? (
+                <div className="flex gap-1.5 flex-wrap">
+                  <button onClick={() => setCheckContentId('')}
+                    className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                      !checkContentId ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:border-violet-500'
+                    }`}>
+                    All content
+                  </button>
+                  {contents.map(c => (
+                    <button key={c.id} onClick={() => setCheckContentId(checkContentId === c.id ? '' : c.id)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                        checkContentId === c.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300 hover:border-violet-500'
+                      }`}>
+                      {c.title}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-violet-500">No content found for {displayDate} — change the date above.</p>
+              )}
+              <p className="text-xs text-violet-600">Click WA / FB / IG on each agent to toggle. Green = checked, gray = not checked.</p>
+            </div>
+          )}
 
           {/* Booth range filter panel */}
           {showBoothFilter && (
@@ -1154,6 +1241,73 @@ export default function ConstituencyAdminPage() {
               )}
             </div>
           )}
+
+          {/* ── Place filter chips (shown only if places are configured) ── */}
+          {places.length > 0 && (
+            <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
+              <span className="shrink-0 text-xs font-semibold text-indigo-500 self-center pr-1">📍 Place:</span>
+              <button
+                onClick={() => { setFilterPlaceId(''); setSelectedAgentIds(new Set()) }}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  !filterPlaceId ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400'
+                }`}
+              >
+                All places
+              </button>
+              {[...places].sort((a, b) => a.booth_from - b.booth_from).map(pl => {
+                const count = agents.filter(a => a.booth_number != null && a.booth_number >= pl.booth_from && a.booth_number <= pl.booth_to).length
+                return (
+                  <button key={pl.id}
+                    onClick={() => { setFilterPlaceId(filterPlaceId === pl.id ? '' : pl.id); setSelectedAgentIds(new Set()) }}
+                    className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                      filterPlaceId === pl.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400'
+                    }`}
+                  >
+                    {pl.name} · {count}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Place info header when filtered */}
+          {filterPlaceId && (() => {
+            const pl = places.find(p => p.id === filterPlaceId)
+            if (!pl) return null
+            const placeAgents = agents.filter(a => a.booth_number != null && a.booth_number >= pl.booth_from && a.booth_number <= pl.booth_to)
+            // Group by monitor
+            const monGroups = {}
+            for (const a of placeAgents) {
+              const mid = a.assigned_monitor_id ?? '__none'
+              if (!monGroups[mid]) monGroups[mid] = []
+              monGroups[mid].push(a)
+            }
+            return (
+              <div className="bg-indigo-950 rounded-xl p-4 text-white">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <p className="font-bold text-indigo-100">{pl.name}</p>
+                    <p className="text-xs text-indigo-400 mt-0.5">Booths {pl.booth_from}–{pl.booth_to}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-bold text-white">{placeAgents.length}</p>
+                    <p className="text-xs text-indigo-400">agents</p>
+                  </div>
+                </div>
+                <div className="space-y-1 border-t border-indigo-900 pt-2">
+                  {Object.entries(monGroups).map(([mid, mAgents]) => {
+                    const mon = monitors.find(m => m.id === mid)
+                    return (
+                      <div key={mid} className="flex items-center justify-between text-xs">
+                        <span className="text-indigo-300">{mon?.full_name ?? '(Unassigned)'}</span>
+                        <span className="text-indigo-100 font-semibold">{mAgents.length} agents</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* ── Monitor filter chips ── */}
           <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
@@ -1445,71 +1599,119 @@ export default function ConstituencyAdminPage() {
               }
 
               return (
-                <div key={a.id} className={`bg-white rounded-xl border p-3 flex items-center gap-2.5 transition-colors ${
-                  isSelected ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                <div key={a.id} className={`bg-white rounded-xl border p-3 transition-colors ${
+                  checkMode ? 'border-violet-200' : isSelected ? 'border-red-300 bg-red-50' : 'border-gray-200'
                 }`}>
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleSelectAgent(a.id)}
-                    className="w-4 h-4 rounded accent-red-600 shrink-0"
-                  />
-                  <span className="text-xs font-bold bg-zinc-100 text-zinc-700 px-2 py-1 rounded-lg shrink-0 min-w-[2.5rem] text-center">
-                    #{a.booth_number ?? '—'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
-                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      {a.phone && (
-                        <span className="text-xs text-gray-400 inline-flex items-center gap-1">
-                          {a.phone}
-                          {isValidPhone(a.phone) === false && (
-                            <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" title="Invalid phone — must be 10 digits" />
-                          )}
-                        </span>
-                      )}
-                      {!filterMonitorId && (mon
-                        ? <span className="text-xs text-slate-500">{mon.full_name}</span>
-                        : <span className="text-xs text-orange-500">Unassigned</span>
-                      )}
-                      {a.created_by && monitors.find(m => m.id === a.created_by) && (
-                        <span className="text-xs text-indigo-400">by {monitors.find(m => m.id === a.created_by)?.full_name}</span>
-                      )}
-                      {a.reassigned_from && (
-                        <span className="text-xs text-amber-600 font-medium">
-                          ↩ from {monitors.find(m => m.id === a.reassigned_from)?.full_name ?? 'prev. monitor'}
-                        </span>
-                      )}
+                  {/* Main agent row */}
+                  <div className="flex items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelectAgent(a.id)}
+                      className="w-4 h-4 rounded accent-red-600 shrink-0"
+                    />
+                    <span className="text-xs font-bold bg-zinc-100 text-zinc-700 px-2 py-1 rounded-lg shrink-0 min-w-[2.5rem] text-center">
+                      #{a.booth_number ?? '—'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{a.name}</p>
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {a.phone && (
+                          <span className="text-xs text-gray-400 inline-flex items-center gap-1">
+                            {a.phone}
+                            {isValidPhone(a.phone) === false && (
+                              <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" title="Invalid phone — must be 10 digits" />
+                            )}
+                          </span>
+                        )}
+                        {!filterMonitorId && (mon
+                          ? <span className="text-xs text-slate-500">{mon.full_name}</span>
+                          : <span className="text-xs text-orange-500">Unassigned</span>
+                        )}
+                        {a.created_by && monitors.find(m => m.id === a.created_by) && (
+                          <span className="text-xs text-indigo-400">by {monitors.find(m => m.id === a.created_by)?.full_name}</span>
+                        )}
+                        {a.reassigned_from && (
+                          <span className="text-xs text-amber-600 font-medium">
+                            ↩ from {monitors.find(m => m.id === a.reassigned_from)?.full_name ?? 'prev. monitor'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {a.fb_url
+                        ? <a href={isValidLink(a.fb_url) ? a.fb_url : undefined} target="_blank" rel="noopener noreferrer"
+                            className={`text-xs px-1 ${isValidLink(a.fb_url) ? 'text-blue-400 hover:text-blue-600' : 'text-orange-400'}`}
+                            title={isValidLink(a.fb_url) ? undefined : 'Invalid URL'}>
+                            {isValidLink(a.fb_url) ? 'FB' : '⚠FB'}
+                          </a>
+                        : <span className="text-xs text-gray-200">FB–</span>
+                      }
+                      {a.ig_url
+                        ? <a href={isValidLink(a.ig_url) ? a.ig_url : undefined} target="_blank" rel="noopener noreferrer"
+                            className={`text-xs px-1 ${isValidLink(a.ig_url) ? 'text-pink-400 hover:text-pink-600' : 'text-orange-400'}`}
+                            title={isValidLink(a.ig_url) ? undefined : 'Invalid URL'}>
+                            {isValidLink(a.ig_url) ? 'IG' : '⚠IG'}
+                          </a>
+                        : <span className="text-xs text-gray-200">IG–</span>
+                      }
+                      <button onClick={() => startEditAgent(a)}
+                        className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100 transition-colors"
+                        title="Edit">✏️</button>
+                      <button
+                        onClick={() => handleDeleteAgent(a.id, a.name)}
+                        disabled={deletingAgentId === a.id}
+                        className="text-red-400 hover:text-red-600 text-xs px-1.5 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-40"
+                        title="Delete">
+                        {deletingAgentId === a.id ? '…' : '✕'}
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {a.fb_url
-                      ? <a href={isValidLink(a.fb_url) ? a.fb_url : undefined} target="_blank" rel="noopener noreferrer"
-                          className={`text-xs px-1 ${isValidLink(a.fb_url) ? 'text-blue-400 hover:text-blue-600' : 'text-orange-400'}`}
-                          title={isValidLink(a.fb_url) ? undefined : 'Invalid URL'}>
-                          {isValidLink(a.fb_url) ? 'FB' : '⚠FB'}
-                        </a>
-                      : <span className="text-xs text-gray-200">FB–</span>
-                    }
-                    {a.ig_url
-                      ? <a href={isValidLink(a.ig_url) ? a.ig_url : undefined} target="_blank" rel="noopener noreferrer"
-                          className={`text-xs px-1 ${isValidLink(a.ig_url) ? 'text-pink-400 hover:text-pink-600' : 'text-orange-400'}`}
-                          title={isValidLink(a.ig_url) ? undefined : 'Invalid URL'}>
-                          {isValidLink(a.ig_url) ? 'IG' : '⚠IG'}
-                        </a>
-                      : <span className="text-xs text-gray-200">IG–</span>
-                    }
-                    <button onClick={() => startEditAgent(a)}
-                      className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100 transition-colors"
-                      title="Edit">✏️</button>
-                    <button
-                      onClick={() => handleDeleteAgent(a.id, a.name)}
-                      disabled={deletingAgentId === a.id}
-                      className="text-red-400 hover:text-red-600 text-xs px-1.5 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-40"
-                      title="Delete">
-                      {deletingAgentId === a.id ? '…' : '✕'}
-                    </button>
-                  </div>
+
+                  {/* Compliance check toggles — shown only in check mode */}
+                  {checkMode && contents.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-violet-100 space-y-1.5">
+                      {(checkContentId ? contents.filter(c => c.id === checkContentId) : contents).map(c => {
+                        const P_CONFIG = [
+                          { key: 'whatsapp', label: 'WA', color: 'emerald' },
+                          { key: 'facebook', label: 'FB', color: 'blue' },
+                          { key: 'instagram', label: 'IG', color: 'pink' },
+                        ]
+                        return (
+                          <div key={c.id} className="flex items-center gap-2 flex-wrap">
+                            {contents.length > 1 && (
+                              <span className="text-xs text-violet-600 font-medium flex-1 min-w-0 truncate">{c.title}</span>
+                            )}
+                            <div className="flex gap-1.5 shrink-0">
+                              {P_CONFIG.map(({ key: p, label, color }) => {
+                                const checked = logMap[a.id]?.[c.id]?.[p]?.is_checked ?? false
+                                const isSaving = savingToggle === `${a.id}-${c.id}-${p}`
+                                return (
+                                  <button
+                                    key={p}
+                                    onClick={() => handleAgentToggle(a.id, c.id, p)}
+                                    disabled={!!savingToggle}
+                                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                                      isSaving
+                                        ? 'opacity-50 cursor-wait'
+                                        : checked
+                                          ? color === 'emerald' ? 'bg-emerald-100 text-emerald-700 border-emerald-400'
+                                            : color === 'blue' ? 'bg-blue-100 text-blue-700 border-blue-400'
+                                            : 'bg-pink-100 text-pink-700 border-pink-400'
+                                          : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-violet-300 hover:text-violet-500'
+                                    }`}
+                                    title={`${checked ? 'Uncheck' : 'Check'} ${p}`}
+                                  >
+                                    {label}{checked ? ' ✓' : ''}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               )
             })}
