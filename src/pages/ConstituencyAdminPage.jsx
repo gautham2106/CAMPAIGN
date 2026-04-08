@@ -211,7 +211,6 @@ export default function ConstituencyAdminPage() {
   // Compliance check mode
   const [checkMode, setCheckMode] = useState(false)
   const [checkContentId, setCheckContentId] = useState('') // '' = all content for date
-  const [savingToggle, setSavingToggle] = useState(null)   // `${agentId}-${contentId}-${platform}`
   const [boothFrom, setBoothFrom] = useState('')
   const [boothTo, setBoothTo] = useState('')
   const [showBoothFilter, setShowBoothFilter] = useState(false)
@@ -691,36 +690,40 @@ export default function ConstituencyAdminPage() {
     weekday: 'short', day: 'numeric', month: 'short'
   })
 
-  async function handleAgentToggle(agentId, contentId, platform) {
-    const key = `${agentId}-${contentId}-${platform}`
-    setSavingToggle(key)
-    try {
-      const client = supabaseAdmin ?? supabase
-      const existing = logMap[agentId]?.[contentId]?.[platform]
-      const newChecked = !(existing?.is_checked ?? false)
-      if (existing?.id) {
-        await client.from('compliance_logs')
-          .update({ is_checked: newChecked })
-          .eq('id', existing.id)
-        setLogMap(prev => ({
-          ...prev,
-          [agentId]: { ...prev[agentId], [contentId]: { ...prev[agentId]?.[contentId], [platform]: { ...existing, is_checked: newChecked } } },
-        }))
-      } else {
-        const { data, error } = await client.from('compliance_logs')
-          .insert({ agent_id: agentId, content_id: contentId, platform, is_checked: true })
-          .select().single()
-        if (error) throw error
-        setLogMap(prev => ({
-          ...prev,
-          [agentId]: { ...prev[agentId], [contentId]: { ...prev[agentId]?.[contentId], [platform]: data } },
-        }))
-      }
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setSavingToggle(null)
+  // Build platform URL for compliance badge links
+  function platformHref(platform, a) {
+    if (platform === 'whatsapp') {
+      const digits = a.phone?.replace(/\D/g, '')
+      if (!digits) return null
+      return `https://wa.me/${digits.length === 10 ? '91' + digits : digits}`
     }
+    if (platform === 'facebook')  return isValidLink(a.fb_url) ? a.fb_url : null
+    if (platform === 'instagram') return isValidLink(a.ig_url) ? a.ig_url : null
+    return null
+  }
+
+  // Read-only compliance badges: green + link if monitor marked done, gray if not
+  function ComplianceBadges({ a }) {
+    if (!checkContentId) return null
+    return (
+      <div className="flex gap-1 shrink-0">
+        {[
+          { p: 'whatsapp', l: 'WA' },
+          { p: 'facebook',  l: 'FB' },
+          { p: 'instagram', l: 'IG' },
+        ].map(({ p, l }) => {
+          const checked = logMap[a.id]?.[checkContentId]?.[p]?.is_checked ?? false
+          const href    = checked ? platformHref(p, a) : null
+          const cls     = checked
+            ? 'bg-green-100 text-green-700 border-green-300 hover:bg-green-200'
+            : 'bg-gray-100 text-gray-300 border-gray-200 cursor-default'
+          const shared  = `text-xs font-bold px-2 py-0.5 rounded-lg border transition-colors ${cls}`
+          return href
+            ? <a key={p} href={href} target="_blank" rel="noopener noreferrer" className={shared} title={`Open ${p} profile`}>{l} ✓</a>
+            : <span key={p} className={shared}>{l}</span>
+        })}
+      </div>
+    )
   }
 
   function handleExport() {
@@ -1200,7 +1203,7 @@ export default function ConstituencyAdminPage() {
                     {contents.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
                   </select>
                   {checkContentId
-                    ? <span className="text-xs text-violet-600">Green = posted ✓ · Red = not posted · Click to toggle</span>
+                    ? <span className="text-xs text-violet-600">Green ✓ = monitor marked done — click to open their actual profile and verify</span>
                     : <span className="text-xs text-violet-400">Select a content item above</span>
                   }
                 </>
@@ -1574,24 +1577,8 @@ export default function ConstituencyAdminPage() {
                                     : <span className="text-gray-200">IG–</span>
                                   }
                                 </div>
-                                {/* Compliance toggles */}
-                                {checkMode && checkContentId && (
-                                  <div className="flex gap-1 shrink-0">
-                                    {[{p:'whatsapp',l:'WA'},{p:'facebook',l:'FB'},{p:'instagram',l:'IG'}].map(({p,l}) => {
-                                      const ok = logMap[a.id]?.[checkContentId]?.[p]?.is_checked ?? false
-                                      return (
-                                        <button key={p} onClick={() => handleAgentToggle(a.id, checkContentId, p)}
-                                          disabled={!!savingToggle}
-                                          className={`text-xs font-bold px-2 py-0.5 rounded transition-colors ${
-                                            savingToggle === `${a.id}-${checkContentId}-${p}` ? 'opacity-40' :
-                                            ok ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-500'
-                                          }`}>
-                                          {l}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                )}
+                                {/* Compliance badges (read-only, green links to platform) */}
+                                {checkMode && <ComplianceBadges a={a} />}
                                 <button onClick={() => startEditAgent(a)} className="text-slate-400 hover:text-slate-700 text-xs px-1.5 py-1 rounded hover:bg-slate-100">✏️</button>
                               </div>
                             )
@@ -1699,25 +1686,8 @@ export default function ConstituencyAdminPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      {/* Compliance toggles — shown first in check mode */}
-                      {checkMode && checkContentId && (
-                        <>
-                          {[{p:'whatsapp',l:'WA'},{p:'facebook',l:'FB'},{p:'instagram',l:'IG'}].map(({p,l}) => {
-                            const ok = logMap[a.id]?.[checkContentId]?.[p]?.is_checked ?? false
-                            return (
-                              <button key={p} onClick={() => handleAgentToggle(a.id, checkContentId, p)}
-                                disabled={!!savingToggle}
-                                className={`text-xs font-bold px-2 py-1 rounded-lg border transition-colors ${
-                                  savingToggle === `${a.id}-${checkContentId}-${p}` ? 'opacity-40' :
-                                  ok ? 'bg-green-100 text-green-700 border-green-300' : 'bg-red-50 text-red-400 border-red-200'
-                                }`}>
-                                {l}
-                              </button>
-                            )
-                          })}
-                          <span className="w-px h-4 bg-gray-200 mx-0.5" />
-                        </>
-                      )}
+                      {/* Compliance badges (read-only, green = monitor marked; click to verify) */}
+                      {checkMode && <><ComplianceBadges a={a} /><span className="w-px h-4 bg-gray-200 mx-0.5" /></>}
                       {/* Link URLs */}
                       {!checkMode && (
                         <>
