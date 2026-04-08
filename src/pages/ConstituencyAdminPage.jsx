@@ -1827,6 +1827,100 @@ export default function ConstituencyAdminPage() {
           <p className="text-xs text-gray-400">
             Amber rows have unsaved changes. Click ✓ to save each row. ⚡ Auto-assign moves agents to matching monitors.
           </p>
+
+          {/* ── Vacant Booths summary ── */}
+          {(() => {
+            const assigned = new Set(agents.map(a => a.booth_number).filter(n => n != null))
+
+            // Build per-monitor vacant lists
+            const monitorVacant = {}
+            for (const m of monitors) {
+              const mRanges = boothAssignments.filter(b => b.monitor_id === m.id)
+              const mVacant = []
+              for (const r of mRanges)
+                for (let n = r.booth_from; n <= r.booth_to; n++)
+                  if (!assigned.has(n)) mVacant.push(n)
+              if (mVacant.length) monitorVacant[m.id] = { name: m.full_name, booths: mVacant }
+            }
+
+            const totalVacant = Object.values(monitorVacant).reduce((s, v) => s + v.booths.length, 0)
+            if (!totalVacant) {
+              return (
+                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-2">
+                  <span className="text-green-600 text-lg">✅</span>
+                  <span className="text-sm font-semibold text-green-700">All booths are assigned — no vacancies!</span>
+                </div>
+              )
+            }
+
+            // Group by place if places are set up
+            const hasPlaces = places.length > 0
+            let placeRows = null
+            if (hasPlaces) {
+              const placeMap = {}
+              for (const [mId, { name: mName, booths }] of Object.entries(monitorVacant)) {
+                for (const booth of booths) {
+                  const place = places.find(p => booth >= p.booth_from && booth <= p.booth_to)
+                  const key  = place?.name ?? '— No Place —'
+                  const sort = place?.booth_from ?? 999999
+                  if (!placeMap[key]) placeMap[key] = { sort, monitors: {} }
+                  if (!placeMap[key].monitors[mId]) placeMap[key].monitors[mId] = { name: mName, booths: [] }
+                  placeMap[key].monitors[mId].booths.push(booth)
+                }
+              }
+              placeRows = Object.entries(placeMap).sort((a, b) => a[1].sort - b[1].sort)
+            }
+
+            return (
+              <div className="bg-white rounded-xl border border-red-200 overflow-hidden">
+                <div className="px-4 py-3 bg-red-50 border-b border-red-100 flex items-center justify-between">
+                  <span className="font-semibold text-red-900 text-sm">Vacant Booths</span>
+                  <span className="text-xs font-bold bg-red-600 text-white px-2.5 py-1 rounded-full">{totalVacant} vacant</span>
+                </div>
+
+                {hasPlaces ? (
+                  <div className="divide-y divide-gray-100">
+                    {placeRows.map(([placeName, { monitors: placeMonitors }]) => {
+                      const placeTotal = Object.values(placeMonitors).reduce((s, v) => s + v.booths.length, 0)
+                      return (
+                        <div key={placeName} className="px-4 py-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">{placeName}</span>
+                            <span className="text-xs text-gray-400">{placeTotal} vacant</span>
+                          </div>
+                          <div className="space-y-2">
+                            {Object.entries(placeMonitors).map(([mId, { name, booths }]) => (
+                              <div key={mId} className="flex flex-wrap items-start gap-x-3 gap-y-1">
+                                <span className="text-xs font-semibold text-gray-700 w-36 shrink-0 pt-0.5 truncate" title={name}>{name}</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {booths.sort((a, b) => a - b).map(n => (
+                                    <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">#{n}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {Object.entries(monitorVacant).map(([mId, { name, booths }]) => (
+                      <div key={mId} className="px-4 py-3 flex flex-wrap items-start gap-x-3 gap-y-1">
+                        <span className="text-xs font-semibold text-gray-700 w-36 shrink-0 pt-0.5 truncate" title={name}>{name}</span>
+                        <div className="flex flex-wrap gap-1">
+                          {booths.sort((a, b) => a - b).map(n => (
+                            <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">#{n}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 

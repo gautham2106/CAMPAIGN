@@ -228,6 +228,7 @@ export default function SuperAdminPage() {
   const [error, setError] = useState('')
 
   // Field Ops tab
+  const [fieldOpsSubTab, setFieldOpsSubTab] = useState('monitors')
   const [expandedConstId, setExpandedConstId] = useState(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState(null)
   // Pre-aggregated field ops stats from DB views
@@ -1050,7 +1051,135 @@ export default function SuperAdminPage() {
 
       {/* ── FIELD OPS TAB ── */}
       {activeTab === 'Field Ops' && (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Sub-tab switcher */}
+          <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit">
+            {[['monitors', 'Monitor View'], ['vacant', 'Vacant Booths']].map(([key, label]) => (
+              <button key={key} onClick={() => setFieldOpsSubTab(key)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  fieldOpsSubTab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Vacant Booths sub-tab ── */}
+          {fieldOpsSubTab === 'vacant' && (() => {
+            // Build vacant data for every constituency upfront
+            const vacantConstList = constituencies.map(c => {
+              const cAgents    = allAgents.filter(a => a.constituency_id === c.id)
+              const cMonitors  = allMonitors.filter(m => m.constituency_id === c.id)
+              const cPlaces    = places.filter(p => p.constituency_id === c.id)
+              const cAssigned  = new Set(cAgents.map(a => a.booth_number).filter(n => n != null))
+
+              // Per-monitor vacant lists
+              const monitorVacant = {}
+              for (const m of cMonitors) {
+                const mRanges = boothAssignments.filter(b => b.monitor_id === m.id)
+                const mVacant = []
+                for (const r of mRanges)
+                  for (let n = r.booth_from; n <= r.booth_to; n++)
+                    if (!cAssigned.has(n)) mVacant.push(n)
+                if (mVacant.length) monitorVacant[m.id] = { name: m.full_name, booths: mVacant }
+              }
+
+              const totalVacant = Object.values(monitorVacant).reduce((s, v) => s + v.booths.length, 0)
+              if (!totalVacant) return null
+
+              // Group by place (if places are configured)
+              let placeRows = null
+              if (cPlaces.length > 0) {
+                const placeMap = {}
+                for (const [mId, { name: mName, booths }] of Object.entries(monitorVacant)) {
+                  for (const booth of booths) {
+                    const place = cPlaces.find(p => booth >= p.booth_from && booth <= p.booth_to)
+                    const key   = place?.name ?? '— No Place —'
+                    const sort  = place?.booth_from ?? 999999
+                    if (!placeMap[key]) placeMap[key] = { sort, monitors: {} }
+                    if (!placeMap[key].monitors[mId]) placeMap[key].monitors[mId] = { name: mName, booths: [] }
+                    placeMap[key].monitors[mId].booths.push(booth)
+                  }
+                }
+                placeRows = Object.entries(placeMap).sort((a, b) => a[1].sort - b[1].sort)
+              }
+
+              return { c, totalVacant, monitorVacant, placeRows, hasPlaces: cPlaces.length > 0 }
+            }).filter(Boolean)
+
+            if (!vacantConstList.length) {
+              return (
+                <div className="text-center py-14">
+                  <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-green-50 text-3xl mb-3">✅</div>
+                  <p className="font-semibold text-slate-700">All booths are assigned!</p>
+                  <p className="text-sm text-slate-400 mt-1">No vacant booths found across any constituency.</p>
+                </div>
+              )
+            }
+
+            return (
+              <div className="space-y-4">
+                {vacantConstList.map(({ c, totalVacant, monitorVacant, placeRows, hasPlaces }) => (
+                  <div key={c.id} className="bg-white rounded-xl border border-red-200 overflow-hidden shadow-sm">
+                    {/* Constituency header */}
+                    <div className="px-4 py-3 bg-red-50 border-b border-red-100 flex items-center justify-between">
+                      <span className="font-semibold text-red-900 text-sm">{c.name}</span>
+                      <span className="text-xs font-bold bg-red-600 text-white px-2.5 py-1 rounded-full">{totalVacant} vacant</span>
+                    </div>
+
+                    {hasPlaces ? (
+                      /* Place-wise grouping */
+                      <div className="divide-y divide-gray-100">
+                        {placeRows.map(([placeName, { monitors: placeMonitors }]) => {
+                          const placeTotal = Object.values(placeMonitors).reduce((s, v) => s + v.booths.length, 0)
+                          return (
+                            <div key={placeName} className="px-4 py-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">{placeName}</span>
+                                <span className="text-xs text-gray-400">{placeTotal} vacant</span>
+                              </div>
+                              <div className="space-y-2">
+                                {Object.entries(placeMonitors).map(([mId, { name, booths }]) => (
+                                  <div key={mId} className="flex flex-wrap items-start gap-x-3 gap-y-1">
+                                    <span className="text-xs font-semibold text-gray-700 w-36 shrink-0 pt-0.5 truncate" title={name}>{name}</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {booths.sort((a, b) => a - b).map(n => (
+                                        <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">#{n}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      /* No places — monitor-only list */
+                      <div className="divide-y divide-gray-100">
+                        {Object.entries(monitorVacant).map(([mId, { name, booths }]) => (
+                          <div key={mId} className="px-4 py-3 flex flex-wrap items-start gap-x-3 gap-y-1">
+                            <span className="text-xs font-semibold text-gray-700 w-36 shrink-0 pt-0.5 truncate" title={name}>{name}</span>
+                            <div className="flex flex-wrap gap-1">
+                              {booths.sort((a, b) => a - b).map(n => (
+                                <span key={n} className="text-xs bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 font-medium">#{n}</span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        <p className="px-4 py-2 text-xs text-gray-400 italic border-t border-gray-100">
+                          No places configured — upload places in Constituencies tab for place-wise grouping.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+
+          {/* ── Monitor View sub-tab ── */}
+          {fieldOpsSubTab === 'monitors' && <div className="space-y-3">
           {constituencies.map(c => {
             const cMonitors = allMonitors.filter(m => m.constituency_id === c.id)
             const cAgents = allAgents.filter(a => a.constituency_id === c.id)
@@ -1214,6 +1343,7 @@ export default function SuperAdminPage() {
               </div>
             )
           })}
+          </div>}
         </div>
       )}
     </Layout>
