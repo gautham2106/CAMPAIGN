@@ -109,7 +109,7 @@ const P_SHORT = { whatsapp: 'WA', facebook: 'FB', instagram: 'IG' }
 const TABS = ['Dashboard', 'Admins', 'Content', 'Constituencies', 'Field Ops']
 
 function isValidLink(url) {
-  if (!url || !url.trim()) return null
+  if (!url || !url.trim()) return false
   return /^(https?:\/\/|www\.).+\..+/.test(url.trim())
 }
 
@@ -267,7 +267,7 @@ export default function SuperAdminPage() {
       fetchAllRows(client, 'profiles', q => q.select('id, full_name, email, phone, constituency_id').eq('role', 'monitor')),
       client.from('profiles').select('id, full_name, email, constituency_id, constituencies(name)').eq('role', 'constituency_admin').limit(5000),
       client.from('daily_content').select('*').order('content_date', { ascending: false }).limit(50),
-      client.from('daily_content').select('content_date').limit(10000),
+      fetchAllRows(client, 'daily_content', q => q.select('content_date')),
       fetchAllRows(client, 'monitor_booth_assignments'),
       fetchAllRows(client, 'places'),
       client.from('constituency_field_ops_stats').select('*'),
@@ -281,7 +281,7 @@ export default function SuperAdminPage() {
       setContents(contentRes.data ?? [])
       setBoothAssignments(boothRes ?? [])
       setPlaces(placesRes ?? [])
-      const unique = [...new Set((allDatesRes.data ?? []).map(r => r.content_date))]
+      const unique = [...new Set((allDatesRes ?? []).map(r => r.content_date))]
       setAllContentDates(unique)
 
       // Build field ops lookup maps from DB views
@@ -365,15 +365,18 @@ export default function SuperAdminPage() {
   // constId: filter content to only items targeted at this constituency
   // filterContentId: further narrow to a single content item
   function getMonitorPlaces(monitorId) {
-    const ranges = boothAssignments.filter(b => b.monitor_id === monitorId)
-    const matched = new Set()
-    for (const r of ranges) {
-      for (const p of places) {
-        if (r.booth_from <= p.booth_to && r.booth_to >= p.booth_from) matched.add(p.name)
-      }
+  const ranges = boothAssignments.filter(b => b.monitor_id === monitorId)
+  if (!ranges.length) return []
+  const monitor = allMonitors.find(m => m.id === monitorId)
+  const constPlaces = places.filter(p => p.constituency_id === monitor?.constituency_id)
+  const matched = new Set()
+  for (const r of ranges) {
+    for (const p of constPlaces) {
+      if (r.booth_from <= p.booth_to && r.booth_to >= p.booth_from) matched.add(p.name)
     }
-    return [...matched]
   }
+  return [...matched]
+}
 
   function emptyStats(total = 0) {
     return { total, done: 0, donePct: 0, platform: { whatsapp: 0, facebook: 0, instagram: 0 }, overall: 0 }
@@ -1053,7 +1056,7 @@ export default function SuperAdminPage() {
             const cAgents = allAgents.filter(a => a.constituency_id === c.id)
             // Use DB view stats (pre-computed) — fallback to JS if view data not yet loaded
             const cfo = constFieldStats[c.id]
-            const cLinkIssues = cfo?.link_issues ?? cAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url).length
+            const cLinkIssues = cfo?.link_issues ?? cAgents.filter(a => !isValidLink(a.fb_url) || !isValidLink(a.ig_url)).length
             const cVacantCount = cfo?.vacant_booths ?? (() => {
               const ranges = boothAssignments.filter(b => b.constituency_id === c.id)
               const assigned = new Set(cAgents.map(a => a.booth_number).filter(n => n != null))
@@ -1086,7 +1089,7 @@ export default function SuperAdminPage() {
                       const mAgents = cAgents.filter(a => a.assigned_monitor_id === m.id)
                       // Use DB view for counts; keep full mLinkIssues array for detail list
                       const mfo = monitorFieldStats[m.id]
-                      const mLinkIssues = mAgents.filter(a => isValidLink(a.fb_url) === false || isValidLink(a.ig_url) === false || !a.fb_url || !a.ig_url)
+                      const mLinkIssues = mAgents.filter(a => !isValidLink(a.fb_url) || !isValidLink(a.ig_url))
                       const mVacantCount = mfo?.vacant_booths ?? (() => {
                         const ranges = boothAssignments.filter(b => b.monitor_id === m.id)
                         const assigned = new Set(mAgents.map(a => a.booth_number).filter(n => n != null))
@@ -1158,8 +1161,8 @@ export default function SuperAdminPage() {
                                         {a.booth_number != null && <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>}
                                         <span className="text-gray-800 flex-1 truncate">{a.name}</span>
                                         <div className="flex gap-1 shrink-0">
-                                          {(!a.fb_url || isValidLink(a.fb_url) === false) && <span className="bg-blue-100 text-blue-700 px-1 rounded font-semibold">FB</span>}
-                                          {(!a.ig_url || isValidLink(a.ig_url) === false) && <span className="bg-pink-100 text-pink-700 px-1 rounded font-semibold">IG</span>}
+                                          {!isValidLink(a.fb_url) && <span className="bg-blue-100 text-blue-700 px-1 rounded font-semibold">FB</span>}
+                                          {!isValidLink(a.ig_url) && <span className="bg-pink-100 text-pink-700 px-1 rounded font-semibold">IG</span>}
                                         </div>
                                       </div>
                                     ))}
@@ -1173,8 +1176,8 @@ export default function SuperAdminPage() {
                                   <p className="text-xs font-bold text-gray-500 mb-1.5">All agents</p>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                                     {mAgents.sort((a, b) => (a.booth_number ?? 0) - (b.booth_number ?? 0)).map(a => {
-                                      const fbBad = isValidLink(a.fb_url) === false || !a.fb_url
-                                      const igBad = isValidLink(a.ig_url) === false || !a.ig_url
+                                      const fbBad = !isValidLink(a.fb_url)
+                                      const igBad = !isValidLink(a.ig_url)
                                       return (
                                         <div key={a.id} className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 ${(fbBad || igBad) ? 'bg-orange-50' : 'bg-white border border-gray-100'}`}>
                                           {a.booth_number != null && <span className="font-bold text-indigo-600 shrink-0">#{a.booth_number}</span>}
