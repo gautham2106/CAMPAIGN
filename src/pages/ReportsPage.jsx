@@ -155,21 +155,28 @@ export default function ReportsPage() {
     try {
       const client = supabaseAdmin ?? supabase
 
-      // 1. Content in date range — filter by constituency when one is selected
+      // 1. Always fetch all content in date range, then filter by constituency in JS.
+      //    Doing this in JS avoids Supabase query issues with [] vs null in arrays.
       let cq = client
         .from('daily_content')
         .select('id,title,content_date,target_constituencies')
         .gte('content_date', dateFrom)
         .lte('content_date', dateTo)
         .order('content_date')
-      if (selContent !== 'all') {
-        cq = cq.eq('id', selContent)
-      } else if (selConst !== 'all') {
-        // Only content targeted at this constituency (null = all constituencies)
-        cq = cq.or(`target_constituencies.is.null,target_constituencies.cs.{"${selConst}"}`)
-      }
-      const { data: rangeContent, error: ce } = await cq
+      if (selContent !== 'all') cq = cq.eq('id', selContent)
+      const { data: rawContent, error: ce } = await cq
       if (ce) throw ce
+
+      // Normalise target_constituencies: treat [] same as null (means "all constituencies").
+      // Then filter to only content relevant for the selected constituency.
+      const rangeContent = (rawContent ?? []).map(c => ({
+        ...c,
+        target_constituencies: c.target_constituencies?.length > 0 ? c.target_constituencies : null,
+      })).filter(c => {
+        if (selConst === 'all') return true
+        // null = targets all constituencies; otherwise must include selConst
+        return c.target_constituencies === null || c.target_constituencies.includes(selConst)
+      })
 
       // 2. Agents — paginate in 1000-row batches to bypass PostgREST max-rows default
       const allAgents = []
@@ -215,16 +222,19 @@ export default function ReportsPage() {
       const agentConstMap = {}
       for (const a of allAgents) agentConstMap[a.id] = a.constituency_id
 
+      // Build a fast lookup: content_id → normalised target_constituencies (null = all)
+      const contentTargetMap = {}
+      for (const c of rangeContent) contentTargetMap[c.id] = c.target_constituencies // already normalised above
+
       // Helper: compute platform checked counts for given agent IDs × content IDs.
-      // Handles per-content targeting: if content has target_constituencies, only
-      // agents in those constituencies count toward the denominator.
+      // target_constituencies is already normalised (null = all, array = specific).
       function computePlatformStats(aIds, cIds) {
         const result = {}
         for (const p of PLATFORMS) {
           let checked = 0
           let opp = 0
           for (const cid of cIds) {
-            const targeting = rangeContent.find(c => c.id === cid)?.target_constituencies
+            const targeting = contentTargetMap[cid] // null = all, array = specific
             const eligible = targeting
               ? aIds.filter(aid => targeting.includes(agentConstMap[aid]))
               : aIds
