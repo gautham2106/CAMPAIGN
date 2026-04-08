@@ -207,7 +207,7 @@ export default function ConstituencyAdminPage() {
   const [agentSearch, setAgentSearch] = useState('')
   const [filterInvalidLinks, setFilterInvalidLinks] = useState(false)
   const [filterMonitorId, setFilterMonitorId] = useState('')
-  const [filterPlaceId, setFilterPlaceId] = useState('')   // '' = all places
+  const [filterPlaceName, setFilterPlaceName] = useState('')   // '' = all places, or a place name string
   // Compliance check mode
   const [checkMode, setCheckMode] = useState(false)
   const [checkContentId, setCheckContentId] = useState('') // '' = all content for date
@@ -662,9 +662,9 @@ export default function ConstituencyAdminPage() {
   const filteredAgents = agents.filter(a => {
     if (filterMonitorId === 'unassigned' && a.assigned_monitor_id) return false
     if (filterMonitorId && filterMonitorId !== 'unassigned' && a.assigned_monitor_id !== filterMonitorId) return false
-    if (filterPlaceId) {
-      const pl = places.find(p => p.id === filterPlaceId)
-      if (!pl || a.booth_number == null || a.booth_number < pl.booth_from || a.booth_number > pl.booth_to) return false
+    if (filterPlaceName) {
+      const plRows = places.filter(p => p.name === filterPlaceName)
+      if (!plRows.some(p => a.booth_number != null && a.booth_number >= p.booth_from && a.booth_number <= p.booth_to)) return false
     }
     if (boothFilterActive) {
       const b = parseInt(a.booth_number)
@@ -1236,25 +1236,32 @@ export default function ConstituencyAdminPage() {
             </div>
           )}
 
-          {/* ── Place filter chips (shown only if places are configured) ── */}
+          {/* ── Place filter chips — deduplicated by name ── */}
           {places.length > 0 && (
             <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-0.5 px-0.5">
               <span className="shrink-0 text-xs font-semibold text-indigo-500 self-center pr-1">📍 Place:</span>
               <button
-                onClick={() => { setFilterPlaceId(''); setSelectedAgentIds(new Set()) }}
+                onClick={() => { setFilterPlaceName(''); setSelectedAgentIds(new Set()) }}
                 className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                  !filterPlaceId ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400'
+                  !filterPlaceName ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400'
                 }`}
               >
                 All places
               </button>
-              {[...places].sort((a, b) => a.booth_from - b.booth_from).map(pl => {
-                const count = agents.filter(a => a.booth_number != null && a.booth_number >= pl.booth_from && a.booth_number <= pl.booth_to).length
+              {/* Unique names sorted by the lowest booth_from across their rows */}
+              {[...new Map(
+                [...places].sort((a, b) => a.booth_from - b.booth_from).map(p => [p.name, p])
+              ).values()].map(pl => {
+                const plRows = places.filter(p => p.name === pl.name)
+                const count  = agents.filter(a =>
+                  a.booth_number != null &&
+                  plRows.some(p => a.booth_number >= p.booth_from && a.booth_number <= p.booth_to)
+                ).length
                 return (
-                  <button key={pl.id}
-                    onClick={() => { setFilterPlaceId(filterPlaceId === pl.id ? '' : pl.id); setSelectedAgentIds(new Set()) }}
+                  <button key={pl.name}
+                    onClick={() => { setFilterPlaceName(filterPlaceName === pl.name ? '' : pl.name); setSelectedAgentIds(new Set()) }}
                     className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                      filterPlaceId === pl.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400'
+                      filterPlaceName === pl.name ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400'
                     }`}
                   >
                     {pl.name} · {count}
@@ -1485,11 +1492,12 @@ export default function ConstituencyAdminPage() {
           )}
 
           {/* ── Agent list — place-grouped OR flat ── */}
-          {filterPlaceId ? (
+          {filterPlaceName ? (
             /* ── Place view: monitor sections with agent rows ── */
             <div className="space-y-3">
               {(() => {
-                const pl = places.find(p => p.id === filterPlaceId)
+                const plRows = places.filter(p => p.name === filterPlaceName)
+                const pl = plRows[0] // for display purposes
                 const groups = []
                 for (const m of monitors) {
                   const mAgents = filteredAgents.filter(a => a.assigned_monitor_id === m.id)
@@ -1504,7 +1512,7 @@ export default function ConstituencyAdminPage() {
                   <>
                     {pl && (
                       <div className="flex items-center justify-between px-1">
-                        <p className="text-sm font-bold text-indigo-700">{pl.name} <span className="font-normal text-indigo-400">· Booths {pl.booth_from}–{pl.booth_to}</span></p>
+                        <p className="text-sm font-bold text-indigo-700">{filterPlaceName} <span className="font-normal text-indigo-400">· {plRows.sort((a,b)=>a.booth_from-b.booth_from).map(r=>`${r.booth_from}–${r.booth_to}`).join(', ')}</span></p>
                         <span className="text-xs text-indigo-500">{filteredAgents.length} agents</span>
                       </div>
                     )}
