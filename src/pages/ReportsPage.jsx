@@ -73,10 +73,10 @@ function DataTable({ rows, groupLabel }) {
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((row, i) => {
-            const overall = pct(
-              PLATFORMS.reduce((s, p) => s + (row.platforms[p]?.checked ?? 0), 0),
-              (row.agents ?? 0) * (row.contentCount ?? 1) * 3
-            )
+            // Use pre-computed opportunities directly (sum of total_agents from view)
+            const totalChecked = PLATFORMS.reduce((s, p) => s + (row.platforms[p]?.checked ?? 0), 0)
+            const totalOpp = PLATFORMS.reduce((s, p) => s + (row.platforms[p]?.opportunities ?? 0), 0)
+            const overall = pct(totalChecked, totalOpp)
             return (
               <tr key={i} className="hover:bg-slate-50 transition-colors">
                 <td className="px-4 py-3 font-medium text-slate-800">
@@ -85,7 +85,7 @@ function DataTable({ rows, groupLabel }) {
                 </td>
                 <td className="px-4 py-3 text-center text-slate-600">{row.agents ?? '—'}</td>
                 {PLATFORMS.map(p => {
-                  const v = pct(row.platforms[p]?.checked ?? 0, (row.agents ?? 0) * (row.contentCount ?? 1))
+                  const v = pct(row.platforms[p]?.checked ?? 0, row.platforms[p]?.opportunities ?? 0)
                   return (
                     <td key={p} className="px-4 py-3 text-center">
                       <span className={`text-sm font-bold ${v >= 80 ? 'text-emerald-600' : v >= 50 ? 'text-amber-600' : v > 0 ? 'text-rose-500' : 'text-slate-400'}`}>
@@ -155,166 +155,123 @@ export default function ReportsPage() {
     try {
       const client = supabaseAdmin ?? supabase
 
-      // 1. Always fetch all content in date range, then filter by constituency in JS.
-      //    Doing this in JS avoids Supabase query issues with [] vs null in arrays.
-      let cq = client
-        .from('daily_content')
-        .select('id,title,content_date,target_constituencies')
+      // Single query to the pre-aggregated view — no raw compliance_logs or digital_agents fetch.
+      // The view already computes total_agents, wa_done, fb_done, ig_done per (content × constituency).
+      let q = client
+        .from('constituency_content_stats')
+        .select('content_id,content_date,title,target_constituencies,constituency_id,total_agents,wa_done,fb_done,ig_done,all_done')
         .gte('content_date', dateFrom)
         .lte('content_date', dateTo)
         .order('content_date')
-      if (selContent !== 'all') cq = cq.eq('id', selContent)
-      const { data: rawContent, error: ce } = await cq
-      if (ce) throw ce
 
-      // Normalise target_constituencies: treat [] same as null (means "all constituencies").
-      // Then filter to only content relevant for the selected constituency.
-      const rangeContent = (rawContent ?? []).map(c => ({
-        ...c,
-        target_constituencies: c.target_constituencies?.length > 0 ? c.target_constituencies : null,
-      })).filter(c => {
-        if (selConst === 'all') return true
-        // null = targets all constituencies; otherwise must include selConst
-        return c.target_constituencies === null || c.target_constituencies.includes(selConst)
-      })
+      if (selContent !== 'all') q = q.eq('content_id', selContent)
+      if (selConst !== 'all') q = q.eq('constituency_id', selConst)
+      else if (isConstAdmin) q = q.eq('constituency_id', profile.constituency_id)
 
-      // 2. Agents — paginate in 1000-row batches to bypass PostgREST max-rows default
-      const allAgents = []
-      const PAGE = 1000
-      for (let offset = 0; ; offset += PAGE) {
-        let aq = client
-          .from('digital_agents')
-          .select('id,constituency_id,assigned_monitor_id')
-          .range(offset, offset + PAGE - 1)
-        if (selConst !== 'all') aq = aq.eq('constituency_id', selConst)
-        else if (isConstAdmin) aq = aq.eq('constituency_id', profile.constituency_id)
-        const { data, error: ae } = await aq
-        if (ae) throw ae
-        allAgents.push(...(data ?? []))
-        if (!data || data.length < PAGE) break
-      }
+      const { data: rows, error: re } = await q
+      if (re) throw re
 
-      if (!rangeContent?.length || !allAgents.length) {
-        setReport({ empty: true, rangeContent: rangeContent ?? [], agents: allAgents })
+      if (!rows?.length) {
+        setReport({ empty: true })
         setLoading(false)
         return
       }
 
-      // 3. Compliance logs — filter by content_id ONLY (no agent_id filter) to avoid
-      // PostgREST URL length limit with large agent lists. We filter by agent in JS below.
-      const { data: logs, error: le } = await client
-        .from('compliance_logs')
-        .select('agent_id,content_id,platform,is_checked')
-        .in('content_id', rangeContent.map(c => c.id))
-        .eq('is_checked', true)
-        .limit(500000)
-      if (le) throw le
-
-      // 4. Build index: { [content_id]: { [agent_id]: { [platform]: true } } }
-      const idx = {}
-      for (const l of logs ?? []) {
-        if (!idx[l.content_id]) idx[l.content_id] = {}
-        if (!idx[l.content_id][l.agent_id]) idx[l.content_id][l.agent_id] = {}
-        idx[l.content_id][l.agent_id][l.platform] = true
-      }
-
-      // Build a map for fast agent lookups: agent_id → constituency_id
-      const agentConstMap = {}
-      for (const a of allAgents) agentConstMap[a.id] = a.constituency_id
-
-      // Build a fast lookup: content_id → normalised target_constituencies (null = all)
-      const contentTargetMap = {}
-      for (const c of rangeContent) contentTargetMap[c.id] = c.target_constituencies // already normalised above
-
-      // Helper: compute platform checked counts for given agent IDs × content IDs.
-      // target_constituencies is already normalised (null = all, array = specific).
-      function computePlatformStats(aIds, cIds) {
+      // Helper: sum wa_done/fb_done/ig_done and total_agents across a set of view rows.
+      // Each view row already has the correct denominator (total_agents) and numerators.
+      function sumStats(rowSet) {
         const result = {}
         for (const p of PLATFORMS) {
-          let checked = 0
-          let opp = 0
-          for (const cid of cIds) {
-            const targeting = contentTargetMap[cid] // null = all, array = specific
-            const eligible = targeting
-              ? aIds.filter(aid => targeting.includes(agentConstMap[aid]))
-              : aIds
-            opp += eligible.length
-            const clog = idx[cid]
-            if (clog) for (const aid of eligible) if (clog[aid]?.[p]) checked++
+          const key = p === 'whatsapp' ? 'wa_done' : p === 'facebook' ? 'fb_done' : 'ig_done'
+          result[p] = {
+            checked:       rowSet.reduce((s, r) => s + (r[key]        ?? 0), 0),
+            opportunities: rowSet.reduce((s, r) => s + (r.total_agents ?? 0), 0),
           }
-          result[p] = { checked, opportunities: opp }
         }
         return result
       }
 
-      const allAgentIds = allAgents.map(a => a.id)
-
       // Overall
-      const overall = computePlatformStats(allAgentIds, rangeContent.map(c => c.id))
+      const overall = sumStats(rows)
 
-      // By Day
-      const dayGroups = {}
-      for (const c of rangeContent) {
-        if (!dayGroups[c.content_date]) dayGroups[c.content_date] = []
-        dayGroups[c.content_date].push(c)
+      // Unique content IDs for summary card
+      const uniqueContentIds = [...new Set(rows.map(r => r.content_id))]
+
+      // Total unique agents: sum total_agents once per constituency (first occurrence).
+      // This gives total distinct agents across all targeted constituencies.
+      const seenConst = new Set()
+      let totalAgents = 0
+      for (const r of rows) {
+        if (!seenConst.has(r.constituency_id)) {
+          seenConst.add(r.constituency_id)
+          totalAgents += r.total_agents ?? 0
+        }
       }
-      const byDay = Object.entries(dayGroups)
+
+      // By Day — group rows by content_date
+      const dayMap = {}
+      for (const r of rows) {
+        if (!dayMap[r.content_date]) dayMap[r.content_date] = []
+        dayMap[r.content_date].push(r)
+      }
+      const byDay = Object.entries(dayMap)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, dayItems]) => {
-          const cIds = dayItems.map(c => c.id)
-          const platforms = computePlatformStats(allAgentIds, cIds)
-          // Agent count = total eligible across all content items on this day (avg)
-          const totalOpp = PLATFORMS.reduce((s, p) => s + platforms[p].opportunities, 0)
-          const agentCount = cIds.length > 0 ? Math.round(totalOpp / PLATFORMS.length / cIds.length) : allAgents.length
+        .map(([date, dayRows]) => {
+          const platforms = sumStats(dayRows)
+          const contentCount = new Set(dayRows.map(r => r.content_id)).size
+          // Average agents per content item on this day
+          const avgAgents = contentCount > 0
+            ? Math.round(platforms.whatsapp.opportunities / contentCount)
+            : 0
           return {
             label: new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }),
-            sub: `${cIds.length} content item${cIds.length > 1 ? 's' : ''}`,
-            agents: agentCount,
-            contentCount: cIds.length,
+            sub: `${contentCount} content item${contentCount > 1 ? 's' : ''}`,
+            agents: avgAgents,
             platforms,
           }
         })
 
-      // By Content — use only agents targeted by each content item
-      const byContent = rangeContent.map(c => {
-        const targeting = c.target_constituencies
-        const targeted = targeting ? allAgents.filter(a => targeting.includes(a.constituency_id)) : allAgents
+      // By Content — group rows by content_id, sum across constituencies
+      const contentMap = {}
+      for (const r of rows) {
+        if (!contentMap[r.content_id]) contentMap[r.content_id] = { title: r.title, date: r.content_date, rows: [] }
+        contentMap[r.content_id].rows.push(r)
+      }
+      const byContent = Object.entries(contentMap).map(([, { title, date, rows: cRows }]) => {
+        const platforms = sumStats(cRows)
         return {
-          label: c.title,
-          sub: new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
-          agents: targeted.length,
-          contentCount: 1,
-          platforms: computePlatformStats(targeted.map(a => a.id), [c.id]),
+          label: title,
+          sub: new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+          // opportunities = total agents targeted by this content (summed across constituencies)
+          agents: platforms.whatsapp.opportunities,
+          platforms,
         }
       })
 
-      // By Constituency — super admin, all-constituencies view only
+      // By Constituency — super admin, all-const view only
       const byConst = []
       if (isSuperAdmin && selConst === 'all') {
-        const constAgentMap = {}
-        for (const a of allAgents) {
-          if (!constAgentMap[a.constituency_id]) constAgentMap[a.constituency_id] = []
-          constAgentMap[a.constituency_id].push(a.id)
+        const constMap = {}
+        for (const r of rows) {
+          if (!constMap[r.constituency_id]) constMap[r.constituency_id] = []
+          constMap[r.constituency_id].push(r)
         }
         for (const con of constituencies) {
-          const cAgentIds = constAgentMap[con.id] ?? []
-          if (!cAgentIds.length) continue
-          // Only count content that targets this constituency (or all)
-          const cContent = rangeContent.filter(rc =>
-            !rc.target_constituencies || rc.target_constituencies.includes(con.id)
-          )
-          if (!cContent.length) continue
+          const cRows = constMap[con.id]
+          if (!cRows?.length) continue
+          const platforms = sumStats(cRows)
+          const contentCount = new Set(cRows.map(r => r.content_id)).size
+          const agentCount = cRows[0]?.total_agents ?? 0
           byConst.push({
             label: con.name,
-            sub: `${cAgentIds.length} agents · ${cContent.length} content`,
-            agents: cAgentIds.length,
-            contentCount: cContent.length,
-            platforms: computePlatformStats(cAgentIds, cContent.map(c => c.id)),
+            sub: `${agentCount} agents · ${contentCount} content`,
+            agents: agentCount,
+            platforms,
           })
         }
       }
 
-      setReport({ overall, byDay, byContent, byConst, totalAgents: allAgents.length, totalContent: rangeContent.length })
+      setReport({ overall, byDay, byContent, byConst, totalAgents, totalContent: uniqueContentIds.length })
     } catch (e) {
       setError(e.message)
     } finally {
