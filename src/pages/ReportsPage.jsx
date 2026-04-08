@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 import { getTodayIST, daysAgoIST } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 import Layout from '../components/Layout'
@@ -127,12 +127,22 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // Reset content selection when date range changes and selected item falls outside
+  useEffect(() => {
+    if (selContent !== 'all') {
+      const still = contentList.find(c => c.id === selContent && c.content_date >= dateFrom && c.content_date <= dateTo)
+      if (!still) setSelContent('all')
+    }
+  }, [dateFrom, dateTo])
+
   useEffect(() => { loadFilters() }, [])
 
   async function loadFilters() {
+    const client = supabaseAdmin ?? supabase
     const [cRes, contRes] = await Promise.all([
-      supabase.from('constituencies').select('id,name').order('name'),
-      supabase.from('daily_content').select('id,title,content_date').order('content_date', { ascending: false }).limit(200),
+      client.from('constituencies').select('id,name').order('name'),
+      // Fetch with target_constituencies so the dropdown can filter by constituency
+      client.from('daily_content').select('id,title,content_date,target_constituencies').order('content_date', { ascending: false }).limit(1000),
     ])
     setConstituencies(cRes.data ?? [])
     setContentList(contRes.data ?? [])
@@ -143,31 +153,54 @@ export default function ReportsPage() {
     setError('')
     setReport(null)
     try {
-      // 1. Content in range
-      let cq = supabase.from('daily_content').select('id,title,content_date,target_constituencies').gte('content_date', dateFrom).lte('content_date', dateTo).order('content_date')
-      if (selContent !== 'all') cq = cq.eq('id', selContent)
+      const client = supabaseAdmin ?? supabase
+
+      // 1. Content in date range — filter by constituency when one is selected
+      let cq = client
+        .from('daily_content')
+        .select('id,title,content_date,target_constituencies')
+        .gte('content_date', dateFrom)
+        .lte('content_date', dateTo)
+        .order('content_date')
+      if (selContent !== 'all') {
+        cq = cq.eq('id', selContent)
+      } else if (selConst !== 'all') {
+        // Only content targeted at this constituency (null = all constituencies)
+        cq = cq.or(`target_constituencies.is.null,target_constituencies.cs.{"${selConst}"}`)
+      }
       const { data: rangeContent, error: ce } = await cq
       if (ce) throw ce
 
-      // 2. Agents
-      let aq = supabase.from('digital_agents').select('id,name,booth_number,constituency_id,assigned_monitor_id')
-      if (selConst !== 'all') aq = aq.eq('constituency_id', selConst)
-      const { data: agents, error: ae } = await aq
-      if (ae) throw ae
+      // 2. Agents — paginate in 1000-row batches to bypass PostgREST max-rows default
+      const allAgents = []
+      const PAGE = 1000
+      for (let offset = 0; ; offset += PAGE) {
+        let aq = client
+          .from('digital_agents')
+          .select('id,constituency_id,assigned_monitor_id')
+          .range(offset, offset + PAGE - 1)
+        if (selConst !== 'all') aq = aq.eq('constituency_id', selConst)
+        else if (isConstAdmin) aq = aq.eq('constituency_id', profile.constituency_id)
+        const { data, error: ae } = await aq
+        if (ae) throw ae
+        allAgents.push(...(data ?? []))
+        if (!data || data.length < PAGE) break
+      }
 
-      if (!rangeContent?.length || !agents?.length) {
-        setReport({ empty: true, rangeContent: rangeContent ?? [], agents: agents ?? [] })
+      if (!rangeContent?.length || !allAgents.length) {
+        setReport({ empty: true, rangeContent: rangeContent ?? [], agents: allAgents })
         setLoading(false)
         return
       }
 
-      // 3. Compliance logs
-      const { data: logs, error: le } = await supabase
+      // 3. Compliance logs — filter by content_id ONLY (no agent_id filter) to avoid
+      // PostgREST URL length limit with large agent lists. We filter by agent in JS below.
+      const { data: logs, error: le } = await client
         .from('compliance_logs')
         .select('agent_id,content_id,platform,is_checked')
         .in('content_id', rangeContent.map(c => c.id))
-        .in('agent_id', agents.map(a => a.id))
         .eq('is_checked', true)
+        .limit(500000)
       if (le) throw le
 
       // 4. Build index: { [content_id]: { [agent_id]: { [platform]: true } } }
@@ -178,92 +211,100 @@ export default function ReportsPage() {
         idx[l.content_id][l.agent_id][l.platform] = true
       }
 
-      const totalAgents = agents.length
-      const contentIds = rangeContent.map(c => c.id)
+      // Build a map for fast agent lookups: agent_id → constituency_id
+      const agentConstMap = {}
+      for (const a of allAgents) agentConstMap[a.id] = a.constituency_id
 
-      // Helper: compute platform stats for a set of agent IDs + content IDs
+      // Helper: compute platform checked counts for given agent IDs × content IDs.
+      // Handles per-content targeting: if content has target_constituencies, only
+      // agents in those constituencies count toward the denominator.
       function computePlatformStats(aIds, cIds) {
-  const result = {}
-  for (const p of PLATFORMS) {
-    let checked = 0
-    let opp = 0
-    for (const cid of cIds) {
-      const content = rangeContent.find(c => c.id === cid)
-      const targeted = content?.target_constituencies
-      const eligibleIds = targeted
-        ? aIds.filter(aid => {
-            const agent = agents.find(a => a.id === aid)
-            return agent && targeted.includes(agent.constituency_id)
-          })
-        : aIds
-      opp += eligibleIds.length
-      for (const aid of eligibleIds) if (idx[cid]?.[aid]?.[p]) checked++
-    }
-    result[p] = { checked, opportunities: opp }
-  }
-  return result
-}
+        const result = {}
+        for (const p of PLATFORMS) {
+          let checked = 0
+          let opp = 0
+          for (const cid of cIds) {
+            const targeting = rangeContent.find(c => c.id === cid)?.target_constituencies
+            const eligible = targeting
+              ? aIds.filter(aid => targeting.includes(agentConstMap[aid]))
+              : aIds
+            opp += eligible.length
+            const clog = idx[cid]
+            if (clog) for (const aid of eligible) if (clog[aid]?.[p]) checked++
+          }
+          result[p] = { checked, opportunities: opp }
+        }
+        return result
+      }
 
-      // ── Overall ──
-      const overall = computePlatformStats(agents.map(a => a.id), contentIds)
+      const allAgentIds = allAgents.map(a => a.id)
 
-      // ── By Day ──
+      // Overall
+      const overall = computePlatformStats(allAgentIds, rangeContent.map(c => c.id))
+
+      // By Day
       const dayGroups = {}
       for (const c of rangeContent) {
         if (!dayGroups[c.content_date]) dayGroups[c.content_date] = []
-        dayGroups[c.content_date].push(c.id)
+        dayGroups[c.content_date].push(c)
       }
       const byDay = Object.entries(dayGroups)
-  .sort(([a], [b]) => a.localeCompare(b))
-  .map(([date, cIds]) => {
-    const platforms = computePlatformStats(agents.map(a => a.id), cIds)
-    const opp = platforms[PLATFORMS[0]]?.opportunities ?? 0
-    const eligibleAgents = cIds.length > 0 ? Math.round(opp / cIds.length) : totalAgents
-    return {
-      label: new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }),
-      sub: `${cIds.length} content item${cIds.length > 1 ? 's' : ''}`,
-      agents: eligibleAgents,
-      contentCount: cIds.length,
-      platforms,
-    }
-  })
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, dayItems]) => {
+          const cIds = dayItems.map(c => c.id)
+          const platforms = computePlatformStats(allAgentIds, cIds)
+          // Agent count = total eligible across all content items on this day (avg)
+          const totalOpp = PLATFORMS.reduce((s, p) => s + platforms[p].opportunities, 0)
+          const agentCount = cIds.length > 0 ? Math.round(totalOpp / PLATFORMS.length / cIds.length) : allAgents.length
+          return {
+            label: new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }),
+            sub: `${cIds.length} content item${cIds.length > 1 ? 's' : ''}`,
+            agents: agentCount,
+            contentCount: cIds.length,
+            platforms,
+          }
+        })
 
-      // ── By Content ──
+      // By Content — use only agents targeted by each content item
       const byContent = rangeContent.map(c => {
-  const platforms = computePlatformStats(agents.map(a => a.id), [c.id])
-  const eligibleAgents = platforms[PLATFORMS[0]]?.opportunities ?? totalAgents
-  return {
-    label: c.title,
-    sub: new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
-    agents: eligibleAgents,
-    contentCount: 1,
-    platforms,
-  }
-})
+        const targeting = c.target_constituencies
+        const targeted = targeting ? allAgents.filter(a => targeting.includes(a.constituency_id)) : allAgents
+        return {
+          label: c.title,
+          sub: new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+          agents: targeted.length,
+          contentCount: 1,
+          platforms: computePlatformStats(targeted.map(a => a.id), [c.id]),
+        }
+      })
 
-      // ── By Constituency (super admin only) ──
+      // By Constituency — super admin, all-constituencies view only
       const byConst = []
-      if (isSuperAdmin || selConst === 'all') {
-        // group agents by constituency
+      if (isSuperAdmin && selConst === 'all') {
         const constAgentMap = {}
-        for (const a of agents) {
+        for (const a of allAgents) {
           if (!constAgentMap[a.constituency_id]) constAgentMap[a.constituency_id] = []
           constAgentMap[a.constituency_id].push(a.id)
         }
-        for (const c of constituencies) {
-          const cAgentIds = constAgentMap[c.id] ?? []
+        for (const con of constituencies) {
+          const cAgentIds = constAgentMap[con.id] ?? []
           if (!cAgentIds.length) continue
+          // Only count content that targets this constituency (or all)
+          const cContent = rangeContent.filter(rc =>
+            !rc.target_constituencies || rc.target_constituencies.includes(con.id)
+          )
+          if (!cContent.length) continue
           byConst.push({
-            label: c.name,
-            sub: `${cAgentIds.length} agents`,
+            label: con.name,
+            sub: `${cAgentIds.length} agents · ${cContent.length} content`,
             agents: cAgentIds.length,
-            contentCount: rangeContent.length,
-            platforms: computePlatformStats(cAgentIds, contentIds),
+            contentCount: cContent.length,
+            platforms: computePlatformStats(cAgentIds, cContent.map(c => c.id)),
           })
         }
       }
 
-      setReport({ overall, byDay, byContent, byConst, totalAgents, totalContent: rangeContent.length })
+      setReport({ overall, byDay, byContent, byConst, totalAgents: allAgents.length, totalContent: rangeContent.length })
     } catch (e) {
       setError(e.message)
     } finally {
@@ -320,11 +361,18 @@ export default function ReportsPage() {
             <select value={selContent} onChange={e => setSelContent(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
               <option value="all">All Content</option>
-              {contentList.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.title} ({new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})
-                </option>
-              ))}
+              {contentList
+                .filter(c => {
+                  if (c.content_date < dateFrom || c.content_date > dateTo) return false
+                  if (selConst !== 'all' && c.target_constituencies?.length > 0 && !c.target_constituencies.includes(selConst)) return false
+                  return true
+                })
+                .map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.title} ({new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})
+                  </option>
+                ))
+              }
             </select>
           </div>
         </div>
