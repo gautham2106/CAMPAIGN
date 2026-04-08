@@ -8,6 +8,7 @@ import BulkAssign from '../components/BulkAssign'
 import CreateMonitorModal from '../components/CreateMonitorModal'
 import BulkMonitorImport from '../components/BulkMonitorImport'
 import MiniCalendar from '../components/MiniCalendar'
+import { exportMasterReport } from '../lib/exportUtils'
 
 function isValidLink(url) {
   if (!url || !url.trim()) return null
@@ -178,6 +179,9 @@ export default function ConstituencyAdminPage() {
   const [contents, setContents] = useState([])
   // logMap: { [agent_id]: { [content_id]: { [platform]: log } } }
   const [logMap, setLogMap] = useState({})
+
+  // Export
+  const [exportSortBy, setExportSortBy] = useState('booth')
 
   const [loading, setLoading] = useState(true)
   const [showCreateMonitor, setShowCreateMonitor] = useState(false)
@@ -678,6 +682,18 @@ export default function ConstituencyAdminPage() {
     weekday: 'short', day: 'numeric', month: 'short'
   })
 
+  function handleExport() {
+    exportMasterReport({
+      constituencies: [{ id: constituencyId, name: profile?.constituencies?.name ?? 'Constituency' }],
+      agentsMap:   { [constituencyId]: agents },
+      monitorsMap: { [constituencyId]: monitors },
+      boothMap:    { [constituencyId]: boothAssignments },
+      placesMap:   { [constituencyId]: places },
+      sortBy: exportSortBy,
+      singleConstId: constituencyId,
+    })
+  }
+
   if (loading) {
     return (
       <Layout title={profile?.constituencies?.name}>
@@ -1070,6 +1086,24 @@ export default function ConstituencyAdminPage() {
               className="text-sm text-slate-600 font-medium border border-slate-200 px-3 py-2 rounded-xl hover:bg-slate-50 shrink-0">
               Import CSV
             </button>
+            {/* Export master report */}
+            <div className="flex items-center gap-1 shrink-0 border border-emerald-300 rounded-xl overflow-hidden bg-white">
+              <select
+                value={exportSortBy}
+                onChange={e => setExportSortBy(e.target.value)}
+                className="text-xs text-emerald-700 font-medium px-2 py-2 bg-transparent focus:outline-none"
+              >
+                <option value="booth">Booth order</option>
+                <option value="place">Place order</option>
+              </select>
+              <button
+                onClick={handleExport}
+                className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2"
+                title="Download master Excel report"
+              >
+                ⬇ Export
+              </button>
+            </div>
             <div className="flex-1 min-w-[160px]">
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>

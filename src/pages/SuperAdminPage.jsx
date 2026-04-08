@@ -5,6 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
+import { exportMasterReport } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -234,6 +235,10 @@ export default function SuperAdminPage() {
   // Pre-aggregated field ops stats from DB views
   const [constFieldStats, setConstFieldStats] = useState({})   // { [constituency_id]: { total_agents, link_issues, vacant_booths } }
   const [monitorFieldStats, setMonitorFieldStats] = useState({}) // { [monitor_id]: { total_agents, link_issues, vacant_booths } }
+
+  // Master export
+  const [exportSortBy, setExportSortBy]     = useState('booth')
+  const [exportConstId, setExportConstId]   = useState('all')
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -500,6 +505,29 @@ export default function SuperAdminPage() {
     } finally {
       setPlacesUploading(false)
     }
+  }
+
+  function handleMasterExport() {
+    // Build per-constituency maps from the flat arrays already loaded
+    const agentsMap   = {}
+    const monitorsMap = {}
+    const boothMap    = {}
+    const placesMap   = {}
+    for (const c of constituencies) {
+      agentsMap[c.id]   = allAgents.filter(a => a.constituency_id === c.id)
+      monitorsMap[c.id] = allMonitors.filter(m => m.constituency_id === c.id)
+      boothMap[c.id]    = boothAssignments.filter(b => b.constituency_id === c.id)
+      placesMap[c.id]   = places.filter(p => p.constituency_id === c.id)
+    }
+    exportMasterReport({
+      constituencies,
+      agentsMap,
+      monitorsMap,
+      boothMap,
+      placesMap,
+      sortBy: exportSortBy,
+      singleConstId: exportConstId === 'all' ? null : exportConstId,
+    })
   }
 
   async function addConstituency() {
@@ -996,6 +1024,44 @@ export default function SuperAdminPage() {
                 )
               })
             )}
+          </div>
+
+          {/* Master Excel Export */}
+          <div className="bg-white rounded-xl border border-emerald-200 p-4 space-y-3">
+            <p className="text-sm font-bold text-gray-800">Export Master Agent Report</p>
+            <p className="text-xs text-gray-500">
+              Download an Excel file with all agents, monitor assignments, booth numbers, FB/IG link status, and vacant booths.
+            </p>
+            <div className="flex flex-wrap gap-2 items-end">
+              <div className="flex-1 min-w-[160px]">
+                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Constituency</label>
+                <select
+                  value={exportConstId}
+                  onChange={e => setExportConstId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                >
+                  <option value="all">All Constituencies (one sheet each)</option>
+                  {constituencies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Sort By</label>
+                <select
+                  value={exportSortBy}
+                  onChange={e => setExportSortBy(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                >
+                  <option value="booth">Booth Number</option>
+                  <option value="place">Place Name</option>
+                </select>
+              </div>
+              <button
+                onClick={handleMasterExport}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+              >
+                ⬇ Download Excel
+              </button>
+            </div>
           </div>
 
           {/* Places Upload */}
