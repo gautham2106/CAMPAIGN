@@ -144,7 +144,7 @@ export default function ReportsPage() {
     setReport(null)
     try {
       // 1. Content in range
-      let cq = supabase.from('daily_content').select('id,title,content_date').gte('content_date', dateFrom).lte('content_date', dateTo).order('content_date')
+      let cq = supabase.from('daily_content').select('id,title,content_date,target_constituencies').gte('content_date', dateFrom).lte('content_date', dateTo).order('content_date')
       if (selContent !== 'all') cq = cq.eq('id', selContent)
       const { data: rangeContent, error: ce } = await cq
       if (ce) throw ce
@@ -152,7 +152,6 @@ export default function ReportsPage() {
       // 2. Agents
       let aq = supabase.from('digital_agents').select('id,name,booth_number,constituency_id,assigned_monitor_id')
       if (selConst !== 'all') aq = aq.eq('constituency_id', selConst)
-      else if (isConstAdmin) aq = aq.eq('constituency_id', profile.constituency_id)
       const { data: agents, error: ae } = await aq
       if (ae) throw ae
 
@@ -184,15 +183,26 @@ export default function ReportsPage() {
 
       // Helper: compute platform stats for a set of agent IDs + content IDs
       function computePlatformStats(aIds, cIds) {
-        const opp = aIds.length * cIds.length
-        const result = {}
-        for (const p of PLATFORMS) {
-          let checked = 0
-          for (const cid of cIds) for (const aid of aIds) if (idx[cid]?.[aid]?.[p]) checked++
-          result[p] = { checked, opportunities: opp }
-        }
-        return result
-      }
+  const result = {}
+  for (const p of PLATFORMS) {
+    let checked = 0
+    let opp = 0
+    for (const cid of cIds) {
+      const content = rangeContent.find(c => c.id === cid)
+      const targeted = content?.target_constituencies
+      const eligibleIds = targeted
+        ? aIds.filter(aid => {
+            const agent = agents.find(a => a.id === aid)
+            return agent && targeted.includes(agent.constituency_id)
+          })
+        : aIds
+      opp += eligibleIds.length
+      for (const aid of eligibleIds) if (idx[cid]?.[aid]?.[p]) checked++
+    }
+    result[p] = { checked, opportunities: opp }
+  }
+  return result
+}
 
       // ── Overall ──
       const overall = computePlatformStats(agents.map(a => a.id), contentIds)
@@ -204,23 +214,32 @@ export default function ReportsPage() {
         dayGroups[c.content_date].push(c.id)
       }
       const byDay = Object.entries(dayGroups)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, cIds]) => ({
-          label: new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }),
-          sub: `${cIds.length} content item${cIds.length > 1 ? 's' : ''}`,
-          agents: totalAgents,
-          contentCount: cIds.length,
-          platforms: computePlatformStats(agents.map(a => a.id), cIds),
-        }))
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([date, cIds]) => {
+    const platforms = computePlatformStats(agents.map(a => a.id), cIds)
+    const opp = platforms[PLATFORMS[0]]?.opportunities ?? 0
+    const eligibleAgents = cIds.length > 0 ? Math.round(opp / cIds.length) : totalAgents
+    return {
+      label: new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }),
+      sub: `${cIds.length} content item${cIds.length > 1 ? 's' : ''}`,
+      agents: eligibleAgents,
+      contentCount: cIds.length,
+      platforms,
+    }
+  })
 
       // ── By Content ──
-      const byContent = rangeContent.map(c => ({
-        label: c.title,
-        sub: new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
-        agents: totalAgents,
-        contentCount: 1,
-        platforms: computePlatformStats(agents.map(a => a.id), [c.id]),
-      }))
+      const byContent = rangeContent.map(c => {
+  const platforms = computePlatformStats(agents.map(a => a.id), [c.id])
+  const eligibleAgents = platforms[PLATFORMS[0]]?.opportunities ?? totalAgents
+  return {
+    label: c.title,
+    sub: new Date(c.content_date + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+    agents: eligibleAgents,
+    contentCount: 1,
+    platforms,
+  }
+})
 
       // ── By Constituency (super admin only) ──
       const byConst = []
