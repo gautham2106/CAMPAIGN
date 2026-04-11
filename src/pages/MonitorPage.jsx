@@ -115,18 +115,19 @@ export default function MonitorPage() {
 
     try {
       const constId = profile?.constituency_id
-      let contentQuery = supabase
+      const { data: allDateContents, error: ce } = await supabase
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
         .order('created_at')
-      if (constId) {
-        contentQuery = contentQuery.or(`target_constituencies.is.null,target_constituencies.cs.{"${constId}"}`)
-      }
-      const { data: dateContents, error: ce } = await contentQuery
       if (ce) throw ce
 
-      setContents(dateContents ?? [])
+      // Client-side filter: keep broadcast (null) or content targeting this constituency
+      const dateContents = (allDateContents ?? []).filter(c =>
+        c.target_constituencies == null ||
+        (Array.isArray(c.target_constituencies) && c.target_constituencies.includes(constId))
+      )
+      setContents(dateContents)
       if (dateContents?.length) setSelectedContentId(dateContents[0].id)
 
       // Load agents (may not be set yet on first run — use state or re-fetch)
@@ -179,18 +180,25 @@ export default function MonitorPage() {
     setPerfLoading(true)
     try {
       const fromDate = daysAgoIST(30)
+      const constId = profile?.constituency_id
 
-      const { data: recentContent } = await supabase
+      // Fetch content with target_constituencies so we can filter to this constituency
+      const { data: allRecentContent } = await supabase
         .from('daily_content')
-        .select('id, content_date')
+        .select('id, target_constituencies')
         .gte('content_date', fromDate)
 
-      if (!recentContent?.length) { setPerfData({}); return }
+      // Only measure against content actually sent to this constituency
+      const relevantContent = (allRecentContent ?? []).filter(c =>
+        c.target_constituencies == null ||
+        (Array.isArray(c.target_constituencies) && c.target_constituencies.includes(constId))
+      )
+      if (!relevantContent.length) { setPerfData({}); return }
 
       const { data: logs } = await supabase
         .from('compliance_logs')
         .select('agent_id, content_id, platform, is_checked')
-        .in('content_id', recentContent.map(c => c.id))
+        .in('content_id', relevantContent.map(c => c.id))
         .in('agent_id', agents.map(a => a.id))
         .eq('is_checked', true)
 
@@ -207,17 +215,20 @@ export default function MonitorPage() {
         agentPlatformCounts[log.agent_id][log.platform]++
       }
 
-      const total = recentContent.length
+      const total = relevantContent.length
       const perf = {}
       for (const agent of agents) {
         const map = agentContentChecks[agent.id] ?? {}
         const pc = agentPlatformCounts[agent.id] ?? { whatsapp: 0, facebook: 0, instagram: 0 }
         const fullyPosted = Object.values(map).filter(c => c === 3).length
+        const totalChecks = pc.whatsapp + pc.facebook + pc.instagram
+        // rate = overall compliance (total checks / total × 3 platforms) — avoids 0% when only some platforms checked
+        const rate = total ? Math.round(totalChecks / (total * 3) * 100) : 0
         const p = (n) => total ? Math.round(n / total * 100) : 0
         perf[agent.id] = {
           fullyPosted,
           total,
-          rate: p(fullyPosted),
+          rate,
           platforms: {
             whatsapp: p(pc.whatsapp),
             facebook: p(pc.facebook),
