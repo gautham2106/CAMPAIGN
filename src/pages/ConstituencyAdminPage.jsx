@@ -9,6 +9,7 @@ import CreateMonitorModal from '../components/CreateMonitorModal'
 import BulkMonitorImport from '../components/BulkMonitorImport'
 import MiniCalendar from '../components/MiniCalendar'
 import { exportMasterReport } from '../lib/exportUtils'
+import AddContentModal from '../components/AddContentModal'
 
 function isValidLink(url) {
   if (!url || !url.trim()) return null
@@ -183,6 +184,9 @@ export default function ConstituencyAdminPage() {
   // Export
   const [exportSortBy, setExportSortBy] = useState('booth')
 
+  // Content creation
+  const [showAddContent, setShowAddContent] = useState(false)
+
   const [loading, setLoading] = useState(true)
   const [showCreateMonitor, setShowCreateMonitor] = useState(false)
   const [showBulkMonitor, setShowBulkMonitor] = useState(false)
@@ -313,6 +317,7 @@ export default function ConstituencyAdminPage() {
           .from('compliance_logs')
           .select('agent_id, content_id, platform, is_checked')
           .in('content_id', dateContents.map(c => c.id))
+          .in('agent_id', agents.map(a => a.id))
           .limit(100000)
         if (le) throw le
         const map = {}
@@ -396,7 +401,7 @@ export default function ConstituencyAdminPage() {
       : contents.map(c => c.id)
     const total = mAgents.length
 
-    if (!total || !contentIds.length) return { total, done: 0, platformPct: {} }
+    if (!total || !contentIds.length) return { total, done: 0, donePct: 0, platformPct: {} }
 
     let done = 0
     const platformChecked = { whatsapp: 0, facebook: 0, instagram: 0 }
@@ -411,10 +416,12 @@ export default function ConstituencyAdminPage() {
       }
     }
 
+    // donePct = overall compliance rate across all platforms (non-zero even when partial checks exist)
+    const totalChecks = platformChecked.whatsapp + platformChecked.facebook + platformChecked.instagram
     return {
       total,
       done,
-      donePct: pct(done, total),
+      donePct: pct(totalChecks, opportunities * PLATFORMS.length),
       platformPct: {
         whatsapp: pct(platformChecked.whatsapp, opportunities),
         facebook: pct(platformChecked.facebook, opportunities),
@@ -768,6 +775,14 @@ export default function ConstituencyAdminPage() {
         />
       )}
 
+      {showAddContent && (
+        <AddContentModal
+          lockedConstituencyId={constituencyId}
+          onAdded={() => { loadDateData(); setShowAddContent(false) }}
+          onClose={() => setShowAddContent(false)}
+        />
+      )}
+
       {showAddAgent && (
         <AddAgentModal
           constituencyId={constituencyId}
@@ -854,16 +869,24 @@ export default function ConstituencyAdminPage() {
             ))}
           </div>
 
-          {/* Date picker */}
+          {/* Date picker + Add Content */}
           <div>
-            <button
-              onClick={() => setShowCalendar(v => !v)}
-              className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-indigo-300 transition-colors w-full sm:w-auto"
-            >
-              <span>📅</span>
-              <span>{isToday ? `Today — ${displayDate}` : displayDate}</span>
-              <span className="ml-auto text-gray-400 sm:ml-2">{showCalendar ? '▲' : '▼'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowCalendar(v => !v)}
+                className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-800 hover:border-indigo-300 transition-colors"
+              >
+                <span>📅</span>
+                <span>{isToday ? `Today — ${displayDate}` : displayDate}</span>
+                <span className="ml-1 text-gray-400">{showCalendar ? '▲' : '▼'}</span>
+              </button>
+              <button
+                onClick={() => setShowAddContent(true)}
+                className="ml-auto bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shrink-0"
+              >
+                + Add Content
+              </button>
+            </div>
             {showCalendar && (
               <div className="mt-2 max-w-sm">
                 <MiniCalendar
@@ -876,8 +899,14 @@ export default function ConstituencyAdminPage() {
           </div>
 
           {contents.length === 0 ? (
-            <div className="bg-white rounded-xl border border-dashed border-gray-300 p-8 text-center text-gray-400 text-sm">
-              No content published on {isToday ? 'today' : displayDate}.
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 p-8 text-center space-y-3">
+              <p className="text-gray-400 text-sm">No content published on {isToday ? 'today' : displayDate}.</p>
+              <button
+                onClick={() => setShowAddContent(true)}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-5 py-2 rounded-xl"
+              >
+                + Add Content for {isToday ? 'Today' : displayDate}
+              </button>
             </div>
           ) : (
             <>
@@ -978,7 +1007,7 @@ export default function ConstituencyAdminPage() {
                               }`}>
                                 {stats.total > 0 ? `${stats.donePct}%` : '—'}
                               </span>
-                              <p className="text-xs text-gray-400">{stats.done}/{stats.total} done</p>
+                              <p className="text-xs text-gray-400">{stats.done}/{stats.total} fully done</p>
                             </div>
                           </div>
                         </div>

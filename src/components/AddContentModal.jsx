@@ -3,13 +3,14 @@ import { supabase } from '../lib/supabase'
 import { getTodayIST } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 
-export default function AddContentModal({ constituencies = [], onAdded, onClose }) {
+// lockedConstituencyId: if set, content is targeted only to that constituency (no selector shown)
+export default function AddContentModal({ constituencies = [], onAdded, onClose, lockedConstituencyId = null }) {
   const { user } = useAuth()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [mediaLink, setMediaLink] = useState('')
-  const [allConst, setAllConst] = useState(true)
-  const [selectedConsts, setSelectedConsts] = useState([])
+  const [allConst, setAllConst] = useState(!lockedConstituencyId)
+  const [selectedConsts, setSelectedConsts] = useState(lockedConstituencyId ? [lockedConstituencyId] : [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -89,7 +90,11 @@ export default function AddContentModal({ constituencies = [], onAdded, onClose 
           </div>
 
           {/* ── Constituency targeting ── */}
-          {constituencies.length > 0 && (
+          {lockedConstituencyId ? (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 text-xs text-indigo-700 font-medium">
+              This content will be sent to your constituency only.
+            </div>
+          ) : constituencies.length > 0 && (
             <div className="border border-slate-200 rounded-xl overflow-hidden">
               <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
                 <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Send To</p>
