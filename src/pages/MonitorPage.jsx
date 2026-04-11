@@ -640,15 +640,37 @@ export default function MonitorPage() {
             </div>
           )}
 
-          {/* Completion banner */}
-          {agents.length > 0 && (() => {
-            const pct = Math.round(doneAgents.length / agents.length * 100)
-            const bg = pct === 100 ? 'bg-green-600' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'
-            const msg = pct === 100 ? '🎉 All agents done!' : todoAgents.length === agents.length ? `🚨 ${agents.length} agents still pending` : `⚡ ${todoAgents.length} agents left to verify`
+          {/* Completion banner — platform-wise WA/FB/IG */}
+          {agents.length > 0 && selectedContentId && (() => {
+            const total = agents.length
+            const waDone = agents.filter(a => logMap[a.id]?.[selectedContentId]?.whatsapp?.is_checked).length
+            const fbDone = agents.filter(a => logMap[a.id]?.[selectedContentId]?.facebook?.is_checked).length
+            const igDone = agents.filter(a => logMap[a.id]?.[selectedContentId]?.instagram?.is_checked).length
+            const allDone = doneAgents.length === total
+            const bg = allDone ? 'bg-green-600' : 'bg-zinc-900'
+            const msg = allDone
+              ? '🎉 All agents done!'
+              : todoAgents.length === total
+              ? `🚨 ${total} agents still pending`
+              : `⚡ ${todoAgents.length} agents left`
             return (
-              <div className={`${bg} text-white rounded-xl px-4 py-3 mb-3 flex items-center justify-between`}>
-                <span className="text-sm font-semibold">{msg}</span>
-                <span className="text-xl font-bold">{pct}%</span>
+              <div className={`${bg} text-white rounded-xl px-4 py-3 mb-3`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold">{msg}</span>
+                  <span className="text-xs text-white/60">{doneAgents.length}/{total} fully done</span>
+                </div>
+                <div className="flex gap-5">
+                  {[
+                    { label: 'WA', done: waDone, color: 'text-emerald-300' },
+                    { label: 'FB', done: fbDone, color: 'text-blue-300' },
+                    { label: 'IG', done: igDone, color: 'text-pink-300' },
+                  ].map(({ label, done, color }) => (
+                    <div key={label} className="flex items-baseline gap-1">
+                      <span className={`text-xl font-bold ${color}`}>{total ? Math.round(done / total * 100) : 0}%</span>
+                      <span className="text-xs text-white/60">{label} · {done}/{total}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )
           })()}
