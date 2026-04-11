@@ -346,22 +346,29 @@ export default function ConstituencyAdminPage() {
       const client = supabaseAdmin ?? supabase
       const fromDate = daysAgoIST(30)
 
-      const { data: recentContent } = await client
+      // Fetch content with target_constituencies so we can filter to this constituency only
+      const { data: allRecentContent } = await client
         .from('daily_content')
-        .select('id')
+        .select('id, target_constituencies')
         .gte('content_date', fromDate)
 
-      const contentIds = recentContent?.map(c => c.id) ?? []
+      // Only count content that was actually sent to this constituency
+      const relevantContent = (allRecentContent ?? []).filter(c =>
+        c.target_constituencies == null ||
+        (Array.isArray(c.target_constituencies) && c.target_constituencies.includes(constituencyId))
+      )
+      const contentIds = relevantContent.map(c => c.id)
       if (!contentIds.length) { setPerfData({ monitors: {}, agents: {} }); return }
 
       const { data: logs } = await client
         .from('compliance_logs')
         .select('agent_id, content_id, platform, is_checked')
         .in('content_id', contentIds)
+        .in('agent_id', agents.map(a => a.id))
         .eq('is_checked', true)
         .limit(200000)
 
-      // Per agent: count fully posted content (all 3 checked)
+      // Per agent: track total checks and fully-done content items
       const agentMap = {} // { [agent_id]: { [content_id]: platform_count } }
       for (const log of logs ?? []) {
         if (!agentMap[log.agent_id]) agentMap[log.agent_id] = {}
@@ -371,11 +378,17 @@ export default function ConstituencyAdminPage() {
       const agentPerf = {}
       for (const a of agents) {
         const map = agentMap[a.id] ?? {}
+        const totalChecks = Object.values(map).reduce((s, c) => s + c, 0)
         const fullyPosted = Object.values(map).filter(c => c === 3).length
-        agentPerf[a.id] = { fullyPosted, total: contentIds.length, rate: pct(fullyPosted, contentIds.length) }
+        // rate = overall compliance (total checks / total opportunities across all 3 platforms)
+        agentPerf[a.id] = {
+          fullyPosted,
+          total: contentIds.length,
+          rate: pct(totalChecks, contentIds.length * PLATFORMS.length),
+        }
       }
 
-      // Per monitor: aggregate their agents' performance
+      // Per monitor: aggregate their agents' compliance rates
       const monitorPerf = {}
       for (const m of monitors) {
         const mAgents = agents.filter(a => a.assigned_monitor_id === m.id)
