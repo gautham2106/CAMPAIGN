@@ -848,15 +848,13 @@ export default function MonitorPage() {
                     .sort((a, b) => (perfData[a.id]?.rate ?? 0) - (perfData[b.id]?.rate ?? 0))
                     .map(agent => {
                       const p = perfData[agent.id] ?? { fullyPosted: 0, total: 0, rate: 0, platforms: { whatsapp: 0, facebook: 0, instagram: 0 } }
-                      const statusColor = p.rate >= 80 ? 'border-l-emerald-500' : p.rate >= 50 ? 'border-l-amber-400' : 'border-l-rose-400'
-                      const rateColor = p.rate >= 80 ? 'text-emerald-600' : p.rate >= 50 ? 'text-amber-600' : 'text-rose-500'
-                      const statusLabel = p.rate >= 80 ? 'Consistent' : p.rate >= 50 ? 'Average' : 'Needs follow-up'
-                      const statusBadge = p.rate >= 80 ? 'bg-emerald-50 text-emerald-700' : p.rate >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-600'
+                      const avgPct = Math.round(((p.platforms?.whatsapp ?? 0) + (p.platforms?.facebook ?? 0) + (p.platforms?.instagram ?? 0)) / 3)
+                      const statusColor = avgPct >= 80 ? 'border-l-emerald-500' : avgPct >= 50 ? 'border-l-amber-400' : 'border-l-rose-400'
 
                       const platformMeta = [
-                        { key: 'whatsapp', label: 'WA', icon: '💬', color: 'bg-emerald-500' },
-                        { key: 'facebook', label: 'FB', icon: '📘', color: 'bg-blue-500' },
-                        { key: 'instagram', label: 'IG', icon: '📸', color: 'bg-pink-500' },
+                        { key: 'whatsapp', label: 'WA', icon: '💬', color: 'bg-emerald-500', textColor: 'text-emerald-600' },
+                        { key: 'facebook', label: 'FB', icon: '📘', color: 'bg-blue-500', textColor: 'text-blue-600' },
+                        { key: 'instagram', label: 'IG', icon: '📸', color: 'bg-pink-500', textColor: 'text-pink-600' },
                       ]
 
                       return (
@@ -871,26 +869,22 @@ export default function MonitorPage() {
                               )}
                               <span className="font-semibold text-slate-800">{agent.name}</span>
                             </div>
-                            <div className="text-right shrink-0 ml-2">
-                              <div className={`text-xl font-bold ${rateColor}`}>{p.rate}%</div>
-                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusBadge}`}>{statusLabel}</span>
+                            {/* Platform % chips */}
+                            <div className="flex gap-2 shrink-0 ml-2">
+                              {platformMeta.map(({ key, label, textColor }) => {
+                                const val = p.platforms?.[key] ?? 0
+                                return (
+                                  <div key={key} className="text-center min-w-[32px]">
+                                    <div className={`text-sm font-bold ${textColor}`}>{val}%</div>
+                                    <div className="text-xs text-slate-400">{label}</div>
+                                  </div>
+                                )
+                              })}
                             </div>
-                          </div>
-
-                          {/* All-done bar */}
-                          <div className="flex items-center gap-2 mb-3">
-                            <span className="text-xs text-slate-400 w-16 shrink-0">All done</span>
-                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all ${p.rate >= 80 ? 'bg-emerald-500' : p.rate >= 50 ? 'bg-amber-400' : 'bg-rose-400'}`}
-                                style={{ width: `${p.rate}%` }}
-                              />
-                            </div>
-                            <span className="text-xs text-slate-400 w-14 text-right shrink-0">{p.fullyPosted}/{p.total}</span>
                           </div>
 
                           {/* Platform bars */}
-                          <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                          <div className="space-y-1.5 border-t border-slate-100 pt-2">
                             {platformMeta.map(({ key, label, icon, color }) => {
                               const val = p.platforms?.[key] ?? 0
                               return (

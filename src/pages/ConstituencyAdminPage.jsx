@@ -1018,25 +1018,36 @@ export default function ConstituencyAdminPage() {
                                 💬 Remind
                               </a>
                             )}
-                            <div className="text-right">
-                              <span className={`text-xl font-bold ${
-                                stats.donePct === 100 ? 'text-green-600' : stats.donePct > 50 ? 'text-yellow-600' : stats.total > 0 ? 'text-red-500' : 'text-gray-400'
-                              }`}>
-                                {stats.total > 0 ? `${stats.donePct}%` : '—'}
-                              </span>
-                              <p className="text-xs text-gray-400">{stats.done}/{stats.total} fully done</p>
-                            </div>
+                            {/* Platform % chips — WA / FB / IG */}
+                            {stats.total > 0 ? (
+                              <div className="flex gap-2">
+                                {[
+                                  { label: 'WA', pct: stats.platformPct?.whatsapp ?? 0, color: 'text-emerald-600' },
+                                  { label: 'FB', pct: stats.platformPct?.facebook  ?? 0, color: 'text-blue-600' },
+                                  { label: 'IG', pct: stats.platformPct?.instagram  ?? 0, color: 'text-pink-600' },
+                                ].map(({ label, pct, color }) => (
+                                  <div key={label} className="text-center min-w-[34px]">
+                                    <div className={`text-sm font-bold ${color}`}>{pct}%</div>
+                                    <div className="text-xs text-gray-400">{label}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : <span className="text-gray-400 text-sm">—</span>}
                           </div>
                         </div>
 
-                        {/* Platform breakdown */}
+                        {/* Platform progress bars */}
                         {stats.total > 0 && (
                           <div className="space-y-1.5 border-t border-gray-100/80 pt-3">
-                            {PLATFORMS.map(p => (
+                            {[
+                              { p: 'whatsapp', label: 'WA', barColor: 'bg-emerald-400' },
+                              { p: 'facebook',  label: 'FB', barColor: 'bg-blue-400' },
+                              { p: 'instagram', label: 'IG', barColor: 'bg-pink-400' },
+                            ].map(({ p, label, barColor }) => (
                               <div key={p} className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-gray-500 w-6">{P_LABEL[p]}</span>
-                                <div className="flex-1">
-                                  <PlatformBar value={stats.platformPct[p] ?? 0} />
+                                <span className="text-xs font-medium text-gray-500 w-6">{label}</span>
+                                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${stats.platformPct[p] ?? 0}%` }} />
                                 </div>
                               </div>
                             ))}
