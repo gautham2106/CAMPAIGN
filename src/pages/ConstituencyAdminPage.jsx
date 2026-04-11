@@ -300,19 +300,23 @@ export default function ConstituencyAdminPage() {
     setError('')
     try {
       const client = supabaseAdmin ?? supabase
-      let contentQuery = client
+      // Fetch all content for the date, then client-side filter by constituency.
+      // The PostgREST JSONB-contains syntax is fragile with array types, so we
+      // filter in JS: keep rows where target_constituencies is null (broadcast)
+      // or where the array contains this constituency's ID.
+      const { data: allContents, error: ce } = await client
         .from('daily_content')
         .select('*')
         .eq('content_date', selectedDate)
         .order('created_at')
-      if (constituencyId) {
-        contentQuery = contentQuery.or(`target_constituencies.is.null,target_constituencies.cs.{"${constituencyId}"}`)
-      }
-      const { data: dateContents, error: ce } = await contentQuery
       if (ce) throw ce
-      setContents(dateContents ?? [])
+      const dateContents = (allContents ?? []).filter(c =>
+        c.target_constituencies == null ||
+        (Array.isArray(c.target_constituencies) && c.target_constituencies.includes(constituencyId))
+      )
+      setContents(dateContents)
 
-      if (dateContents?.length && agents.length) {
+      if (dateContents.length && agents.length) {
         const { data: logs, error: le } = await client
           .from('compliance_logs')
           .select('agent_id, content_id, platform, is_checked')
