@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 import { getTodayIST } from '../lib/dateUtils'
 import { useAuth } from '../context/AuthContext'
 
@@ -28,7 +28,8 @@ export default function AddContentModal({ constituencies = [], onAdded, onClose,
     }
     setSaving(true)
     setError('')
-    const { error } = await supabase.from('daily_content').insert({
+    const client = supabaseAdmin ?? supabase
+    const { error } = await client.from('daily_content').insert({
       title,
       description: description || null,
       media_link: mediaLink || null,
