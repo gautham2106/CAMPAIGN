@@ -239,6 +239,7 @@ export default function SuperAdminPage() {
   // Master export
   const [exportSortBy, setExportSortBy]     = useState('booth')
   const [exportConstId, setExportConstId]   = useState('all')
+  const [exporting, setExporting]           = useState(false)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -507,27 +508,40 @@ export default function SuperAdminPage() {
     }
   }
 
-  function handleMasterExport() {
-    // Build per-constituency maps from the flat arrays already loaded
-    const agentsMap   = {}
-    const monitorsMap = {}
-    const boothMap    = {}
-    const placesMap   = {}
-    for (const c of constituencies) {
-      agentsMap[c.id]   = allAgents.filter(a => a.constituency_id === c.id)
-      monitorsMap[c.id] = allMonitors.filter(m => m.constituency_id === c.id)
-      boothMap[c.id]    = boothAssignments.filter(b => b.constituency_id === c.id)
-      placesMap[c.id]   = places.filter(p => p.constituency_id === c.id)
+  async function handleMasterExport() {
+    setExporting(true)
+    try {
+      // Always fetch fresh data so the export reflects the latest DB state
+      const client = supabaseAdmin ?? supabase
+      const [freshAgents, freshMonitors, freshBooths, freshPlaces] = await Promise.all([
+        fetchAllRows(client, 'digital_agents'),
+        fetchAllRows(client, 'profiles', q => q.select('id, full_name, email, phone, constituency_id').eq('role', 'monitor')),
+        fetchAllRows(client, 'monitor_booth_assignments'),
+        fetchAllRows(client, 'places'),
+      ])
+
+      const agentsMap   = {}
+      const monitorsMap = {}
+      const boothMap    = {}
+      const placesMap   = {}
+      for (const c of constituencies) {
+        agentsMap[c.id]   = freshAgents.filter(a => a.constituency_id === c.id)
+        monitorsMap[c.id] = freshMonitors.filter(m => m.constituency_id === c.id)
+        boothMap[c.id]    = freshBooths.filter(b => b.constituency_id === c.id)
+        placesMap[c.id]   = freshPlaces.filter(p => p.constituency_id === c.id)
+      }
+      exportMasterReport({
+        constituencies,
+        agentsMap,
+        monitorsMap,
+        boothMap,
+        placesMap,
+        sortBy: exportSortBy,
+        singleConstId: exportConstId === 'all' ? null : exportConstId,
+      })
+    } finally {
+      setExporting(false)
     }
-    exportMasterReport({
-      constituencies,
-      agentsMap,
-      monitorsMap,
-      boothMap,
-      placesMap,
-      sortBy: exportSortBy,
-      singleConstId: exportConstId === 'all' ? null : exportConstId,
-    })
   }
 
   async function addConstituency() {
@@ -1057,9 +1071,10 @@ export default function SuperAdminPage() {
               </div>
               <button
                 onClick={handleMasterExport}
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+                disabled={exporting}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
               >
-                ⬇ Download Excel
+                {exporting ? 'Fetching latest…' : '⬇ Download Excel'}
               </button>
             </div>
           </div>

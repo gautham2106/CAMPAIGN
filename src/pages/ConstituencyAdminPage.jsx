@@ -183,6 +183,7 @@ export default function ConstituencyAdminPage() {
 
   // Export
   const [exportSortBy, setExportSortBy] = useState('booth')
+  const [exporting, setExporting] = useState(false)
 
   // Content creation
   const [showAddContent, setShowAddContent] = useState(false)
@@ -750,16 +751,28 @@ export default function ConstituencyAdminPage() {
     )
   }
 
-  function handleExport() {
-    exportMasterReport({
-      constituencies: [{ id: constituencyId, name: profile?.constituencies?.name ?? 'Constituency' }],
-      agentsMap:   { [constituencyId]: agents },
-      monitorsMap: { [constituencyId]: monitors },
-      boothMap:    { [constituencyId]: boothAssignments },
-      placesMap:   { [constituencyId]: places },
-      sortBy: exportSortBy,
-      singleConstId: constituencyId,
-    })
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [freshAgents, freshMonitors, freshBooths, freshPlaces] = await Promise.all([
+        client.from('digital_agents').select('*').eq('constituency_id', constituencyId).limit(50000).then(r => r.data ?? []),
+        client.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).limit(5000).then(r => r.data ?? []),
+        client.from('monitor_booth_assignments').select('*').eq('constituency_id', constituencyId).then(r => r.data ?? []),
+        client.from('places').select('*').eq('constituency_id', constituencyId).then(r => r.data ?? []),
+      ])
+      exportMasterReport({
+        constituencies: [{ id: constituencyId, name: profile?.constituencies?.name ?? 'Constituency' }],
+        agentsMap:   { [constituencyId]: freshAgents },
+        monitorsMap: { [constituencyId]: freshMonitors },
+        boothMap:    { [constituencyId]: freshBooths },
+        placesMap:   { [constituencyId]: freshPlaces },
+        sortBy: exportSortBy,
+        singleConstId: constituencyId,
+      })
+    } finally {
+      setExporting(false)
+    }
   }
 
   if (loading) {
@@ -1199,10 +1212,11 @@ export default function ConstituencyAdminPage() {
               </select>
               <button
                 onClick={handleExport}
-                className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2"
+                disabled={exporting}
+                className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-semibold px-3 py-2"
                 title="Download master Excel report"
               >
-                ⬇ Export
+                {exporting ? 'Fetching…' : '⬇ Export'}
               </button>
             </div>
             <div className="flex-1 min-w-[160px]">
