@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport, exportPlaceWiseReport } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -240,7 +240,8 @@ export default function SuperAdminPage() {
   const [exportSortBy, setExportSortBy]     = useState('booth')
   const [exportConstId, setExportConstId]   = useState('all')
   const [exporting, setExporting]           = useState(false)
-  const [exportingPlace, setExportingPlace] = useState(false)
+  const [exportingPlace, setExportingPlace]   = useState(false)
+  const [exportingPlacePerf, setExportingPlacePerf] = useState(false)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -585,6 +586,71 @@ export default function SuperAdminPage() {
     if (error) setError(error.message)
     else { setNewConstName(''); loadBase() }
     setAddingConst(false)
+  }
+
+  async function handlePlacePerformanceExport() {
+    setExportingPlacePerf(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [freshAgents, freshMonitors, freshBooths, freshPlaces] = await Promise.all([
+        fetchAllRows(client, 'digital_agents'),
+        fetchAllRows(client, 'profiles', q => q.select('id, full_name, email, phone, constituency_id').eq('role', 'monitor')),
+        fetchAllRows(client, 'monitor_booth_assignments'),
+        fetchAllRows(client, 'places'),
+      ])
+
+      // Fetch content for the selected date
+      const { data: allContent } = await client
+        .from('daily_content')
+        .select('id, title, content_date, target_constituencies')
+        .eq('content_date', selectedDate)
+      const contents = allContent ?? []
+
+      // Fetch compliance logs for those content items (no agent_id filter — scope by content_id only)
+      let allLogs = []
+      if (contents.length) {
+        const { data: logs } = await client
+          .from('compliance_logs')
+          .select('agent_id, content_id, platform, is_checked')
+          .in('content_id', contents.map(c => c.id))
+          .eq('is_checked', true)
+          .limit(500000)
+        allLogs = logs ?? []
+      }
+
+      // Build per-constituency maps
+      const agentsMap = {}, monitorsMap = {}, boothMap = {}, placesMap = {}, contentsMap = {}, logsMap = {}
+      const agentConstMap = Object.fromEntries(freshAgents.map(a => [a.id, a.constituency_id]))
+      for (const c of constituencies) {
+        agentsMap[c.id]   = freshAgents.filter(a => a.constituency_id === c.id)
+        monitorsMap[c.id] = freshMonitors.filter(m => m.constituency_id === c.id)
+        boothMap[c.id]    = freshBooths.filter(b => b.constituency_id === c.id)
+        placesMap[c.id]   = freshPlaces.filter(p => p.constituency_id === c.id)
+        contentsMap[c.id] = contents.filter(ct =>
+          ct.target_constituencies == null ||
+          (Array.isArray(ct.target_constituencies) && ct.target_constituencies.includes(c.id))
+        )
+        logsMap[c.id] = []
+      }
+      for (const log of allLogs) {
+        const cid = agentConstMap[log.agent_id]
+        if (cid && logsMap[cid]) logsMap[cid].push(log)
+      }
+
+      exportPlacePerformanceReport({
+        constituencies,
+        agentsMap,
+        monitorsMap,
+        boothMap,
+        placesMap,
+        contentsMap,
+        logsMap,
+        singleConstId: exportConstId === 'all' ? null : exportConstId,
+        date: selectedDate,
+      })
+    } finally {
+      setExportingPlacePerf(false)
+    }
   }
 
   async function handleRenameConst(id, name) {
@@ -1116,6 +1182,14 @@ export default function SuperAdminPage() {
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
               >
                 {exportingPlace ? 'Fetching latest…' : '⬇ Place-wise Report'}
+              </button>
+              <button
+                onClick={handlePlacePerformanceExport}
+                disabled={exportingPlacePerf}
+                className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+                title={`WA/FB/IG compliance by place for ${selectedDate}`}
+              >
+                {exportingPlacePerf ? 'Fetching latest…' : `⬇ Place Performance (${selectedDate})`}
               </button>
             </div>
           </div>

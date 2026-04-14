@@ -268,6 +268,140 @@ export function exportMasterReport({ constituencies, agentsMap, monitorsMap, boo
 }
 
 /**
+ * Build the place-wise performance (compliance) sheet for one constituency.
+ *
+ * Layout:
+ *  1. Overall summary table — one row per place, WA/FB/IG checked counts + %
+ *     across ALL content items for the date.
+ *  2. Per-content sections — same place breakdown repeated for each content item.
+ */
+function buildPlacePerformanceSheetData(constName, agents, monitors, boothAssignments, places, contents, logs, date) {
+  const sortedPlaces = [...places].sort((a, b) => a.name.localeCompare(b.name))
+
+  // Agent id → place name
+  const agentPlaceMap = {}
+  for (const a of agents) {
+    const p = getPlace(a.booth_number, places)
+    agentPlaceMap[a.id] = p?.name ?? null
+  }
+
+  // Monitors covering each place (booth range overlap)
+  const placeMonitorNames = {}
+  for (const p of sortedPlaces) {
+    placeMonitorNames[p.name] = monitors
+      .filter(m => boothAssignments.some(b =>
+        b.monitor_id === m.id &&
+        b.booth_from <= p.booth_to &&
+        b.booth_to   >= p.booth_from
+      ))
+      .map(m => m.full_name)
+  }
+
+  // Agent count per place
+  const placeAgentIds = {}
+  for (const p of sortedPlaces) placeAgentIds[p.name] = []
+  for (const a of agents) {
+    const pname = agentPlaceMap[a.id]
+    if (pname && placeAgentIds[pname]) placeAgentIds[pname].push(a.id)
+  }
+
+  // Compliance lookup: { agentId: { contentId: { whatsapp, facebook, instagram } } }
+  const compMap = {}
+  for (const log of logs) {
+    if (!log.is_checked) continue
+    if (!compMap[log.agent_id]) compMap[log.agent_id] = {}
+    if (!compMap[log.agent_id][log.content_id]) compMap[log.agent_id][log.content_id] = {}
+    compMap[log.agent_id][log.content_id][log.platform] = true
+  }
+
+  function pctStr(num, den) {
+    return den ? Math.round(num / den * 100) + '%' : '—'
+  }
+
+  // Stats for a set of agent IDs against a specific content item
+  function contentStats(agentIds, contentId) {
+    let wa = 0, fb = 0, ig = 0
+    for (const id of agentIds) {
+      const c = compMap[id]?.[contentId] ?? {}
+      if (c.whatsapp)  wa++
+      if (c.facebook)  fb++
+      if (c.instagram) ig++
+    }
+    return { n: agentIds.length, wa, fb, ig }
+  }
+
+  // Stats for a set of agent IDs aggregated across all content items
+  function allContentStats(agentIds) {
+    const nc = contents.length
+    let wa = 0, fb = 0, ig = 0
+    for (const id of agentIds) {
+      for (const ct of contents) {
+        const c = compMap[id]?.[ct.id] ?? {}
+        if (c.whatsapp)  wa++
+        if (c.facebook)  fb++
+        if (c.instagram) ig++
+      }
+    }
+    return { n: agentIds.length, nc, wa, fb, ig }
+  }
+
+  const PERF_HEADERS = [
+    'Place', 'Monitors', 'Total Agents',
+    'WA Checked', 'WA%', 'FB Checked', 'FB%', 'IG Checked', 'IG%',
+  ]
+
+  function summarySection(label, statsFn) {
+    const rows = []
+    let tN = 0, tWA = 0, tFB = 0, tIG = 0, tOpp = 0
+    for (const p of sortedPlaces) {
+      const ids = placeAgentIds[p.name] ?? []
+      const { n, nc, wa, fb, ig } = statsFn(ids)
+      const opp = nc !== undefined ? n * nc : n  // nc = content count for overall, else 1 per content row
+      tN += n; tWA += wa; tFB += fb; tIG += ig; tOpp += opp
+      rows.push([
+        p.name,
+        (placeMonitorNames[p.name] ?? []).join(', ') || '—',
+        n,
+        wa, pctStr(wa, opp),
+        fb, pctStr(fb, opp),
+        ig, pctStr(ig, opp),
+      ])
+    }
+    rows.push(['TOTAL', '', tN, tWA, pctStr(tWA, tOpp), tFB, pctStr(tFB, tOpp), tIG, pctStr(tIG, tOpp)])
+    return [
+      [label],
+      PERF_HEADERS,
+      ...rows,
+    ]
+  }
+
+  const data = [
+    [`Place Performance Report — ${constName} — ${date}`],
+    [`Content items on this date: ${contents.length}`],
+    [],
+  ]
+
+  if (contents.length === 0) {
+    data.push(['No content found for this date.'])
+    return data
+  }
+
+  // 1. Overall summary (all content combined)
+  data.push(...summarySection('── OVERALL (all content combined) ──', allContentStats))
+
+  // 2. Per-content breakdowns
+  for (const ct of contents) {
+    data.push([])
+    data.push(...summarySection(
+      `── CONTENT: ${ct.title} ──`,
+      ids => { const s = contentStats(ids, ct.id); return { ...s, nc: 1 } }
+    ))
+  }
+
+  return data
+}
+
+/**
  * Download place-wise Excel report for one or all constituencies.
  * Each constituency gets one sheet with a summary table + detailed grouped agent list.
  */
@@ -295,6 +429,44 @@ export function exportPlaceWiseReport({ constituencies, agentsMap, monitorsMap, 
   const fname = singleConstId
     ? `${list[0]?.name ?? 'constituency'}_place_report_${today}.xlsx`
     : `all_constituencies_place_report_${today}.xlsx`
+
+  XLSX.writeFile(wb, fname)
+}
+
+/**
+ * Download place performance (compliance) Excel report for one or all constituencies.
+ * Shows WA/FB/IG check counts and % per place, overall and per content item.
+ *
+ * @param {Object} opts.contentsMap  { [constId]: dailyContent[] }  — already filtered to constituency
+ * @param {Object} opts.logsMap      { [constId]: complianceLog[] }
+ * @param {string} opts.date         YYYY-MM-DD label used in filename and header
+ */
+export function exportPlacePerformanceReport({ constituencies, agentsMap, monitorsMap, boothMap, placesMap, contentsMap, logsMap, singleConstId, date }) {
+  const wb = XLSX.utils.book_new()
+
+  const list = singleConstId
+    ? constituencies.filter(c => c.id === singleConstId)
+    : constituencies
+
+  for (const c of list) {
+    const sheetData = buildPlacePerformanceSheetData(
+      c.name,
+      agentsMap[c.id]   ?? [],
+      monitorsMap[c.id] ?? [],
+      boothMap[c.id]    ?? [],
+      placesMap[c.id]   ?? [],
+      contentsMap[c.id] ?? [],
+      logsMap[c.id]     ?? [],
+      date,
+    )
+    const ws = XLSX.utils.aoa_to_sheet(sheetData)
+    ws['!cols'] = [26, 38, 13, 13, 8, 13, 8, 13, 8].map(w => ({ wch: w }))
+    XLSX.utils.book_append_sheet(wb, ws, c.name.slice(0, 31))
+  }
+
+  const fname = singleConstId
+    ? `${list[0]?.name ?? 'constituency'}_place_performance_${date}.xlsx`
+    : `all_constituencies_place_performance_${date}.xlsx`
 
   XLSX.writeFile(wb, fname)
 }

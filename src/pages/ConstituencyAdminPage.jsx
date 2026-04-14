@@ -8,7 +8,7 @@ import BulkAssign from '../components/BulkAssign'
 import CreateMonitorModal from '../components/CreateMonitorModal'
 import BulkMonitorImport from '../components/BulkMonitorImport'
 import MiniCalendar from '../components/MiniCalendar'
-import { exportMasterReport, exportPlaceWiseReport } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport } from '../lib/exportUtils'
 import AddContentModal from '../components/AddContentModal'
 
 function isValidLink(url) {
@@ -184,7 +184,8 @@ export default function ConstituencyAdminPage() {
   // Export
   const [exportSortBy, setExportSortBy] = useState('booth')
   const [exporting, setExporting] = useState(false)
-  const [exportingPlace, setExportingPlace] = useState(false)
+  const [exportingPlace, setExportingPlace]         = useState(false)
+  const [exportingPlacePerf, setExportingPlacePerf] = useState(false)
 
   // Content creation
   const [showAddContent, setShowAddContent] = useState(false)
@@ -799,6 +800,54 @@ export default function ConstituencyAdminPage() {
     }
   }
 
+  async function handlePlacePerformanceExport() {
+    setExportingPlacePerf(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [freshAgents, freshMonitors, freshBooths, freshPlaces] = await Promise.all([
+        client.from('digital_agents').select('*').eq('constituency_id', constituencyId).limit(50000).then(r => r.data ?? []),
+        client.from('profiles').select('*').eq('role', 'monitor').eq('constituency_id', constituencyId).limit(5000).then(r => r.data ?? []),
+        client.from('monitor_booth_assignments').select('*').eq('constituency_id', constituencyId).then(r => r.data ?? []),
+        client.from('places').select('*').eq('constituency_id', constituencyId).then(r => r.data ?? []),
+      ])
+
+      const { data: allContent } = await client
+        .from('daily_content')
+        .select('id, title, content_date, target_constituencies')
+        .eq('content_date', selectedDate)
+      const dateContents = (allContent ?? []).filter(c =>
+        c.target_constituencies == null ||
+        (Array.isArray(c.target_constituencies) && c.target_constituencies.includes(constituencyId))
+      )
+
+      let freshLogs = []
+      if (dateContents.length && freshAgents.length) {
+        const { data: logs } = await client
+          .from('compliance_logs')
+          .select('agent_id, content_id, platform, is_checked')
+          .in('content_id', dateContents.map(c => c.id))
+          .in('agent_id', freshAgents.map(a => a.id))
+          .eq('is_checked', true)
+          .limit(100000)
+        freshLogs = logs ?? []
+      }
+
+      exportPlacePerformanceReport({
+        constituencies: [{ id: constituencyId, name: profile?.constituencies?.name ?? 'Constituency' }],
+        agentsMap:   { [constituencyId]: freshAgents },
+        monitorsMap: { [constituencyId]: freshMonitors },
+        boothMap:    { [constituencyId]: freshBooths },
+        placesMap:   { [constituencyId]: freshPlaces },
+        contentsMap: { [constituencyId]: dateContents },
+        logsMap:     { [constituencyId]: freshLogs },
+        singleConstId: constituencyId,
+        date: selectedDate,
+      })
+    } finally {
+      setExportingPlacePerf(false)
+    }
+  }
+
   if (loading) {
     return (
       <Layout title={profile?.constituencies?.name}>
@@ -1245,10 +1294,18 @@ export default function ConstituencyAdminPage() {
               <button
                 onClick={handlePlaceExport}
                 disabled={exportingPlace}
-                className="text-xs bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold px-3 py-2 rounded-r-lg"
+                className="text-xs bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold px-3 py-2"
                 title="Download place-wise Excel report"
               >
                 {exportingPlace ? 'Fetching…' : '⬇ Place-wise'}
+              </button>
+              <button
+                onClick={handlePlacePerformanceExport}
+                disabled={exportingPlacePerf}
+                className="text-xs bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white font-semibold px-3 py-2 rounded-r-lg"
+                title={`WA/FB/IG compliance by place for ${selectedDate}`}
+              >
+                {exportingPlacePerf ? 'Fetching…' : '⬇ Place Perf'}
               </button>
             </div>
             <div className="flex-1 min-w-[160px]">
