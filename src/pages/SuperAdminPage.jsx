@@ -905,29 +905,35 @@ export default function SuperAdminPage() {
               {!placeViewConstId ? (
                 <p className="px-4 py-6 text-sm text-gray-400 text-center">Select a constituency above to see place-wise WA/FB/IG compliance.</p>
               ) : (() => {
-                // Aggregate place rows across all content items for this constituency
+                // Group by place_name (same name = same place across multiple booth ranges)
                 const groups = {}
                 for (const row of allPlaceStats) {
                   if (row.constituency_id !== placeViewConstId) continue
-                  if (!groups[row.place_id]) {
-                    groups[row.place_id] = {
-                      place_id: row.place_id, place_name: row.place_name,
+                  if (!groups[row.place_name]) {
+                    groups[row.place_name] = {
+                      place_name: row.place_name,
                       monitor_names: row.monitor_names, total: row.total_agents,
                       wa: 0, fb: 0, ig: 0, contentCount: 0,
                     }
                   }
-                  groups[row.place_id].wa += row.wa_done
-                  groups[row.place_id].fb += row.fb_done
-                  groups[row.place_id].ig += row.ig_done
-                  groups[row.place_id].contentCount++
+                  groups[row.place_name].wa += row.wa_done
+                  groups[row.place_name].fb += row.fb_done
+                  groups[row.place_name].ig += row.ig_done
+                  groups[row.place_name].contentCount++
                 }
-                const rows = Object.values(groups).sort((a, b) => a.place_name.localeCompare(b.place_name))
+                // Sort by overall % descending
+                const rows = Object.values(groups).sort((a, b) => {
+                  const opp = n => n.total * n.contentCount || 1
+                  const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
+                  return overall(b) - overall(a)
+                })
                 if (!rows.length) return <p className="px-4 py-6 text-sm text-gray-400 text-center">No places configured for this constituency.</p>
 
                 return (
                   <div>
                     <div className="flex items-center gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-400 uppercase tracking-wide">
                       <span className="flex-1">Place · Monitors</span>
+                      <span className="w-10 text-center text-gray-500">Avg</span>
                       <span className="w-14 text-center text-emerald-600">WA</span>
                       <span className="w-14 text-center text-blue-600">FB</span>
                       <span className="w-14 text-center text-pink-600">IG</span>
@@ -937,14 +943,18 @@ export default function SuperAdminPage() {
                         const opp = g.total * g.contentCount
                         const p = n => opp ? Math.round(n / opp * 100) : 0
                         const waP = p(g.wa), fbP = p(g.fb), igP = p(g.ig)
+                        const avg = Math.round((waP + fbP + igP) / 3)
                         return (
-                          <div key={g.place_id} className="flex items-center gap-2 px-4 py-2.5">
+                          <div key={g.place_name} className="flex items-center gap-2 px-4 py-2.5">
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-gray-800">{g.place_name}</p>
                               <p className="text-xs text-indigo-500">
                                 {g.total} agents{g.monitor_names ? ` · ${g.monitor_names}` : ''}
                               </p>
                             </div>
+                            <div className={`w-10 text-center text-xs font-bold rounded-full px-1 py-0.5 ${
+                              avg >= 80 ? 'text-green-700 bg-green-50' : avg >= 50 ? 'text-yellow-700 bg-yellow-50' : avg > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
+                            }`}>{avg}%</div>
                             {[
                               { val: waP, done: g.wa },
                               { val: fbP, done: g.fb },

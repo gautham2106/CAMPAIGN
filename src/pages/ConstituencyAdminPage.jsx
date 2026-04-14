@@ -1202,25 +1202,29 @@ export default function ConstituencyAdminPage() {
 
               {/* ── Place Performance (from place_content_stats view) ── */}
               {placeStats.length > 0 && (() => {
-                // Group rows by place_id, aggregating across content items
+                // Group rows by place_name (same name = same place, even across multiple booth ranges)
                 const groups = {}
                 for (const row of placeStats) {
                   if (overviewContentId && row.content_id !== overviewContentId) continue
-                  if (!groups[row.place_id]) {
-                    groups[row.place_id] = {
-                      place_id:      row.place_id,
+                  if (!groups[row.place_name]) {
+                    groups[row.place_name] = {
                       place_name:    row.place_name,
                       monitor_names: row.monitor_names,
                       total:         row.total_agents,
                       wa: 0, fb: 0, ig: 0, contentCount: 0,
                     }
                   }
-                  groups[row.place_id].wa += row.wa_done
-                  groups[row.place_id].fb += row.fb_done
-                  groups[row.place_id].ig += row.ig_done
-                  groups[row.place_id].contentCount++
+                  groups[row.place_name].wa += row.wa_done
+                  groups[row.place_name].fb += row.fb_done
+                  groups[row.place_name].ig += row.ig_done
+                  groups[row.place_name].contentCount++
                 }
-                const rows = Object.values(groups).sort((a, b) => a.place_name.localeCompare(b.place_name))
+                // Sort by overall % descending (worst last)
+                const rows = Object.values(groups).sort((a, b) => {
+                  const opp = n => n.total * n.contentCount || 1
+                  const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
+                  return overall(b) - overall(a)
+                })
                 if (!rows.length) return null
                 return (
                   <div>
@@ -1236,7 +1240,7 @@ export default function ConstituencyAdminPage() {
                           : avg > 0  ? 'border-red-200 bg-red-50'
                           : 'border-gray-200'
                         return (
-                          <div key={g.place_id} className={`bg-white rounded-xl border p-4 ${border}`}>
+                          <div key={g.place_name} className={`bg-white rounded-xl border p-4 ${border}`}>
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-gray-900 text-sm">{g.place_name}</p>
@@ -1244,7 +1248,11 @@ export default function ConstituencyAdminPage() {
                                   {g.total} agents{g.monitor_names ? ` · ${g.monitor_names}` : ''}
                                 </p>
                               </div>
-                              <div className="flex gap-3 shrink-0">
+                              <div className="flex items-center gap-3 shrink-0">
+                                <div className={`text-sm font-bold px-2 py-0.5 rounded-full ${
+                                  avg >= 80 ? 'bg-green-100 text-green-700' : avg >= 50 ? 'bg-yellow-100 text-yellow-700' : avg > 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'
+                                }`}>{avg}%</div>
+                                <div className="flex gap-3">
                                 {[
                                   { label: 'WA', val: waP, color: 'text-emerald-600' },
                                   { label: 'FB', val: fbP, color: 'text-blue-600' },
@@ -1255,7 +1263,8 @@ export default function ConstituencyAdminPage() {
                                     <div className="text-xs text-gray-400">{label}</div>
                                   </div>
                                 ))}
-                              </div>
+                                </div>{/* end flex gap-3 */}
+                              </div>{/* end items-center gap-3 */}
                             </div>
                           </div>
                         )
