@@ -250,6 +250,11 @@ export default function SuperAdminPage() {
   const [placesUploadError, setPlacesUploadError] = useState('')
   const placesFileRef = useRef(null)
 
+  // Dashboard — place performance drill-down (loaded on demand per constituency)
+  const [placeViewConstId, setPlaceViewConstId] = useState(null)
+  const [placeViewLogs, setPlaceViewLogs]       = useState([])   // compliance_logs for that const
+  const [placeViewLoading, setPlaceViewLoading] = useState(false)
+
   // Per-constituency selected content filter in dashboard drill-down
 
   // Constituency rename/delete
@@ -370,9 +375,32 @@ export default function SuperAdminPage() {
     }
   }
 
-  // Compute stats for a set of agent IDs on selectedDate
-  // constId: filter content to only items targeted at this constituency
-  // filterContentId: further narrow to a single content item
+  async function loadPlaceView(constId) {
+    if (placeViewConstId === constId) { setPlaceViewConstId(null); return }
+    setPlaceViewConstId(constId)
+    setPlaceViewLogs([])
+    setPlaceViewLoading(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const constAgentIds = allAgents.filter(a => a.constituency_id === constId).map(a => a.id)
+      const contentIds = dateContents
+        .filter(c => c.target_constituencies == null || c.target_constituencies.includes(constId))
+        .map(c => c.id)
+      if (constAgentIds.length && contentIds.length) {
+        const { data: logs } = await client
+          .from('compliance_logs')
+          .select('agent_id, content_id, platform, is_checked')
+          .in('content_id', contentIds)
+          .in('agent_id', constAgentIds)
+          .eq('is_checked', true)
+          .limit(100000)
+        setPlaceViewLogs(logs ?? [])
+      }
+    } finally {
+      setPlaceViewLoading(false)
+    }
+  }
+
   function getMonitorPlaces(monitorId) {
   const ranges = boothAssignments.filter(b => b.monitor_id === monitorId)
   if (!ranges.length) return []
@@ -883,6 +911,118 @@ export default function SuperAdminPage() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {/* ── Place Performance Drill-down ── */}
+          {dateContents.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+                <p className="font-semibold text-gray-900">Place Performance</p>
+                <select
+                  value={placeViewConstId ?? ''}
+                  onChange={e => e.target.value ? loadPlaceView(e.target.value) : setPlaceViewConstId(null)}
+                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                >
+                  <option value="">Select constituency…</option>
+                  {constituencies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              {!placeViewConstId ? (
+                <p className="px-4 py-6 text-sm text-gray-400 text-center">Select a constituency above to see place-wise WA/FB/IG compliance.</p>
+              ) : placeViewLoading ? (
+                <p className="px-4 py-6 text-sm text-gray-400 text-center">Loading…</p>
+              ) : (() => {
+                const constAgents   = allAgents.filter(a => a.constituency_id === placeViewConstId)
+                const constPlaces   = places.filter(p => p.constituency_id === placeViewConstId)
+                const constBooths   = boothAssignments.filter(b => b.constituency_id === placeViewConstId)
+                const constMonitors = allMonitors.filter(m => m.constituency_id === placeViewConstId)
+                const constContents = dateContents.filter(c =>
+                  c.target_constituencies == null || c.target_constituencies.includes(placeViewConstId)
+                )
+
+                if (constPlaces.length === 0) {
+                  return <p className="px-4 py-6 text-sm text-gray-400 text-center">No places configured for this constituency.</p>
+                }
+
+                // Build compliance lookup from fetched logs
+                const comp = {}
+                for (const log of placeViewLogs) {
+                  if (!comp[log.agent_id]) comp[log.agent_id] = {}
+                  if (!comp[log.agent_id][log.content_id]) comp[log.agent_id][log.content_id] = {}
+                  comp[log.agent_id][log.content_id][log.platform] = true
+                }
+
+                const sortedPlaces = [...constPlaces].sort((a, b) => a.name.localeCompare(b.name))
+
+                return (
+                  <div>
+                    {/* Column headers */}
+                    <div className="flex items-center gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                      <span className="flex-1">Place · Monitors</span>
+                      <span className="w-14 text-center text-emerald-600">WA</span>
+                      <span className="w-14 text-center text-blue-600">FB</span>
+                      <span className="w-14 text-center text-pink-600">IG</span>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {sortedPlaces.map(place => {
+                        const placeAgents = constAgents.filter(a =>
+                          a.booth_number != null &&
+                          a.booth_number >= place.booth_from &&
+                          a.booth_number <= place.booth_to
+                        )
+                        if (placeAgents.length === 0) return null
+
+                        const coveringMonitors = constMonitors.filter(m =>
+                          constBooths.some(b =>
+                            b.monitor_id === m.id &&
+                            b.booth_from <= place.booth_to &&
+                            b.booth_to   >= place.booth_from
+                          )
+                        )
+
+                        let wa = 0, fb = 0, ig = 0
+                        const opp = placeAgents.length * (constContents.length || 1)
+                        for (const a of placeAgents) {
+                          for (const c of constContents) {
+                            if (comp[a.id]?.[c.id]?.whatsapp)  wa++
+                            if (comp[a.id]?.[c.id]?.facebook)  fb++
+                            if (comp[a.id]?.[c.id]?.instagram) ig++
+                          }
+                        }
+                        const p = n => constContents.length ? Math.round(n / opp * 100) : 0
+                        const waP = p(wa), fbP = p(fb), igP = p(ig)
+
+                        return (
+                          <div key={place.id} className="flex items-center gap-2 px-4 py-2.5">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800">{place.name}</p>
+                              <p className="text-xs text-indigo-500">
+                                {placeAgents.length} agents
+                                {coveringMonitors.length > 0 && ` · ${coveringMonitors.map(m => m.full_name).join(', ')}`}
+                              </p>
+                            </div>
+                            {[
+                              { val: waP, done: wa, textColor: 'text-emerald-700', bg: 'bg-emerald-50' },
+                              { val: fbP, done: fb, textColor: 'text-blue-700',    bg: 'bg-blue-50' },
+                              { val: igP, done: ig, textColor: 'text-pink-700',    bg: 'bg-pink-50' },
+                            ].map(({ val, done, textColor, bg }, i) => {
+                              const color = val === 100 ? `${textColor} ${bg}` : val >= 50 ? 'text-yellow-700 bg-yellow-50' : val > 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
+                              return (
+                                <div key={i} className={`w-14 text-center rounded-lg py-1 ${color}`}>
+                                  <p className="text-xs font-bold">{val}%</p>
+                                  <p className="text-xs">{done}/{opp / (constContents.length || 1)}</p>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>

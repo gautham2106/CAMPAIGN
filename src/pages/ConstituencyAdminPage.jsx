@@ -1189,6 +1189,80 @@ export default function ConstituencyAdminPage() {
                 </div>
               </div>
 
+              {/* ── Place Performance ── */}
+              {places.length > 0 && (
+                <div>
+                  <h3 className="font-bold text-gray-900 mb-3">Place Performance</h3>
+                  <div className="space-y-2">
+                    {[...places]
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(place => {
+                        const placeAgents = agents.filter(a =>
+                          a.booth_number != null &&
+                          a.booth_number >= place.booth_from &&
+                          a.booth_number <= place.booth_to
+                        )
+                        if (placeAgents.length === 0) return null
+
+                        const coveringMonitors = monitors.filter(m =>
+                          boothAssignments.some(b =>
+                            b.monitor_id === m.id &&
+                            b.booth_from <= place.booth_to &&
+                            b.booth_to   >= place.booth_from
+                          )
+                        )
+
+                        const activeContents = overviewContentId
+                          ? contents.filter(c => c.id === overviewContentId)
+                          : contents
+
+                        let wa = 0, fb = 0, ig = 0
+                        const opp = placeAgents.length * (activeContents.length || 1)
+                        for (const a of placeAgents) {
+                          for (const c of activeContents) {
+                            if (logMap[a.id]?.[c.id]?.whatsapp?.is_checked)  wa++
+                            if (logMap[a.id]?.[c.id]?.facebook?.is_checked)  fb++
+                            if (logMap[a.id]?.[c.id]?.instagram?.is_checked) ig++
+                          }
+                        }
+                        const pct = n => activeContents.length ? Math.round(n / opp * 100) : 0
+                        const waP = pct(wa), fbP = pct(fb), igP = pct(ig)
+                        const avg = Math.round((waP + fbP + igP) / 3)
+                        const border = avg >= 80 ? 'border-green-200 bg-green-50'
+                          : avg >= 50 ? 'border-yellow-200 bg-yellow-50'
+                          : avg > 0  ? 'border-red-200 bg-red-50'
+                          : 'border-gray-200'
+
+                        return (
+                          <div key={place.id} className={`bg-white rounded-xl border p-4 ${border}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-gray-900 text-sm">{place.name}</p>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                  {placeAgents.length} agents
+                                  {coveringMonitors.length > 0 && ` · ${coveringMonitors.map(m => m.full_name).join(', ')}`}
+                                </p>
+                              </div>
+                              <div className="flex gap-3 shrink-0">
+                                {[
+                                  { label: 'WA', val: waP, color: 'text-emerald-600' },
+                                  { label: 'FB', val: fbP, color: 'text-blue-600' },
+                                  { label: 'IG', val: igP, color: 'text-pink-600' },
+                                ].map(({ label, val, color }) => (
+                                  <div key={label} className="text-center min-w-[34px]">
+                                    <div className={`text-sm font-bold ${color}`}>{val}%</div>
+                                    <div className="text-xs text-gray-400">{label}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                  </div>
+                </div>
+              )}
+
               {/* Performance history toggle */}
               <div className="border-t pt-4">
                 <button
