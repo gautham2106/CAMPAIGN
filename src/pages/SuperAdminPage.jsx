@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -240,6 +240,7 @@ export default function SuperAdminPage() {
   const [exportSortBy, setExportSortBy]     = useState('booth')
   const [exportConstId, setExportConstId]   = useState('all')
   const [exporting, setExporting]           = useState(false)
+  const [exportingPlace, setExportingPlace] = useState(false)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -541,6 +542,39 @@ export default function SuperAdminPage() {
       })
     } finally {
       setExporting(false)
+    }
+  }
+
+  async function handlePlaceExport() {
+    setExportingPlace(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [freshAgents, freshMonitors, freshBooths, freshPlaces] = await Promise.all([
+        fetchAllRows(client, 'digital_agents'),
+        fetchAllRows(client, 'profiles', q => q.select('id, full_name, email, phone, constituency_id').eq('role', 'monitor')),
+        fetchAllRows(client, 'monitor_booth_assignments'),
+        fetchAllRows(client, 'places'),
+      ])
+      const agentsMap   = {}
+      const monitorsMap = {}
+      const boothMap    = {}
+      const placesMap   = {}
+      for (const c of constituencies) {
+        agentsMap[c.id]   = freshAgents.filter(a => a.constituency_id === c.id)
+        monitorsMap[c.id] = freshMonitors.filter(m => m.constituency_id === c.id)
+        boothMap[c.id]    = freshBooths.filter(b => b.constituency_id === c.id)
+        placesMap[c.id]   = freshPlaces.filter(p => p.constituency_id === c.id)
+      }
+      exportPlaceWiseReport({
+        constituencies,
+        agentsMap,
+        monitorsMap,
+        boothMap,
+        placesMap,
+        singleConstId: exportConstId === 'all' ? null : exportConstId,
+      })
+    } finally {
+      setExportingPlace(false)
     }
   }
 
@@ -1074,7 +1108,14 @@ export default function SuperAdminPage() {
                 disabled={exporting}
                 className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
               >
-                {exporting ? 'Fetching latest…' : '⬇ Download Excel'}
+                {exporting ? 'Fetching latest…' : '⬇ Master Report'}
+              </button>
+              <button
+                onClick={handlePlaceExport}
+                disabled={exportingPlace}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+              >
+                {exportingPlace ? 'Fetching latest…' : '⬇ Place-wise Report'}
               </button>
             </div>
           </div>
