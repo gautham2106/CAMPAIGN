@@ -180,6 +180,8 @@ export default function ConstituencyAdminPage() {
   const [contents, setContents] = useState([])
   // logMap: { [agent_id]: { [content_id]: { [platform]: log } } }
   const [logMap, setLogMap] = useState({})
+  // placeStats: rows from place_content_stats view for the selected date
+  const [placeStats, setPlaceStats] = useState([])
 
   // Export
   const [exportSortBy, setExportSortBy] = useState('booth')
@@ -320,22 +322,31 @@ export default function ConstituencyAdminPage() {
       setContents(dateContents)
 
       if (dateContents.length && agents.length) {
-        const { data: logs, error: le } = await client
-          .from('compliance_logs')
-          .select('agent_id, content_id, platform, is_checked')
-          .in('content_id', dateContents.map(c => c.id))
-          .in('agent_id', agents.map(a => a.id))
-          .limit(100000)
-        if (le) throw le
+        const [logsRes, placeRes] = await Promise.all([
+          client
+            .from('compliance_logs')
+            .select('agent_id, content_id, platform, is_checked')
+            .in('content_id', dateContents.map(c => c.id))
+            .in('agent_id', agents.map(a => a.id))
+            .limit(100000),
+          client
+            .from('place_content_stats')
+            .select('*')
+            .eq('content_date', selectedDate)
+            .eq('constituency_id', constituencyId),
+        ])
+        if (logsRes.error) throw logsRes.error
         const map = {}
-        for (const log of logs ?? []) {
+        for (const log of logsRes.data ?? []) {
           if (!map[log.agent_id]) map[log.agent_id] = {}
           if (!map[log.agent_id][log.content_id]) map[log.agent_id][log.content_id] = {}
           map[log.agent_id][log.content_id][log.platform] = log
         }
         setLogMap(map)
+        setPlaceStats(placeRes.data ?? [])
       } else {
         setLogMap({})
+        setPlaceStats([])
       }
     } catch (e) {
       setError(e.message)
@@ -1189,58 +1200,48 @@ export default function ConstituencyAdminPage() {
                 </div>
               </div>
 
-              {/* ── Place Performance ── */}
-              {places.length > 0 && (
-                <div>
-                  <h3 className="font-bold text-gray-900 mb-3">Place Performance</h3>
-                  <div className="space-y-2">
-                    {[...places]
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map(place => {
-                        const placeAgents = agents.filter(a =>
-                          a.booth_number != null &&
-                          a.booth_number >= place.booth_from &&
-                          a.booth_number <= place.booth_to
-                        )
-                        if (placeAgents.length === 0) return null
-
-                        const coveringMonitors = monitors.filter(m =>
-                          boothAssignments.some(b =>
-                            b.monitor_id === m.id &&
-                            b.booth_from <= place.booth_to &&
-                            b.booth_to   >= place.booth_from
-                          )
-                        )
-
-                        const activeContents = overviewContentId
-                          ? contents.filter(c => c.id === overviewContentId)
-                          : contents
-
-                        let wa = 0, fb = 0, ig = 0
-                        const opp = placeAgents.length * (activeContents.length || 1)
-                        for (const a of placeAgents) {
-                          for (const c of activeContents) {
-                            if (logMap[a.id]?.[c.id]?.whatsapp?.is_checked)  wa++
-                            if (logMap[a.id]?.[c.id]?.facebook?.is_checked)  fb++
-                            if (logMap[a.id]?.[c.id]?.instagram?.is_checked) ig++
-                          }
-                        }
-                        const pct = n => activeContents.length ? Math.round(n / opp * 100) : 0
-                        const waP = pct(wa), fbP = pct(fb), igP = pct(ig)
+              {/* ── Place Performance (from place_content_stats view) ── */}
+              {placeStats.length > 0 && (() => {
+                // Group rows by place_id, aggregating across content items
+                const groups = {}
+                for (const row of placeStats) {
+                  if (overviewContentId && row.content_id !== overviewContentId) continue
+                  if (!groups[row.place_id]) {
+                    groups[row.place_id] = {
+                      place_id:      row.place_id,
+                      place_name:    row.place_name,
+                      monitor_names: row.monitor_names,
+                      total:         row.total_agents,
+                      wa: 0, fb: 0, ig: 0, contentCount: 0,
+                    }
+                  }
+                  groups[row.place_id].wa += row.wa_done
+                  groups[row.place_id].fb += row.fb_done
+                  groups[row.place_id].ig += row.ig_done
+                  groups[row.place_id].contentCount++
+                }
+                const rows = Object.values(groups).sort((a, b) => a.place_name.localeCompare(b.place_name))
+                if (!rows.length) return null
+                return (
+                  <div>
+                    <h3 className="font-bold text-gray-900 mb-3">Place Performance</h3>
+                    <div className="space-y-2">
+                      {rows.map(g => {
+                        const opp = g.total * g.contentCount
+                        const p = n => opp ? Math.round(n / opp * 100) : 0
+                        const waP = p(g.wa), fbP = p(g.fb), igP = p(g.ig)
                         const avg = Math.round((waP + fbP + igP) / 3)
                         const border = avg >= 80 ? 'border-green-200 bg-green-50'
                           : avg >= 50 ? 'border-yellow-200 bg-yellow-50'
                           : avg > 0  ? 'border-red-200 bg-red-50'
                           : 'border-gray-200'
-
                         return (
-                          <div key={place.id} className={`bg-white rounded-xl border p-4 ${border}`}>
+                          <div key={g.place_id} className={`bg-white rounded-xl border p-4 ${border}`}>
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-gray-900 text-sm">{place.name}</p>
+                                <p className="font-semibold text-gray-900 text-sm">{g.place_name}</p>
                                 <p className="text-xs text-gray-500 mt-0.5">
-                                  {placeAgents.length} agents
-                                  {coveringMonitors.length > 0 && ` · ${coveringMonitors.map(m => m.full_name).join(', ')}`}
+                                  {g.total} agents{g.monitor_names ? ` · ${g.monitor_names}` : ''}
                                 </p>
                               </div>
                               <div className="flex gap-3 shrink-0">
@@ -1259,9 +1260,10 @@ export default function ConstituencyAdminPage() {
                           </div>
                         )
                       })}
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
 
               {/* Performance history toggle */}
               <div className="border-t pt-4">

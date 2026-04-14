@@ -519,6 +519,97 @@ GRANT SELECT ON monitor_content_stats TO authenticated;
 -- ============================================================
 
 -- ============================================================
+-- VIEW: place_content_stats
+-- Pre-aggregated per (content_id, place_id).
+-- Joins agents to places via booth_number range, then aggregates
+-- compliance at the place level.  Includes which monitors cover
+-- each place (string_agg of names, computed once per place via CTE).
+--
+-- Typical query: filter by content_date + constituency_id → a few
+-- rows per place, instant response instead of loading raw compliance_logs.
+-- ============================================================
+CREATE OR REPLACE VIEW place_content_stats AS
+WITH place_monitors AS (
+  -- Compute monitor names for each place once (range overlap join)
+  SELECT
+    p.id AS place_id,
+    string_agg(prof.full_name, ', ' ORDER BY prof.full_name) AS monitor_names
+  FROM places p
+  JOIN monitor_booth_assignments mba
+    ON  mba.constituency_id = p.constituency_id
+    AND mba.booth_from <= p.booth_to
+    AND mba.booth_to   >= p.booth_from
+  JOIN profiles prof ON prof.id = mba.monitor_id
+  GROUP BY p.id
+)
+SELECT
+  dc.id               AS content_id,
+  dc.content_date,
+  dc.title,
+  dc.target_constituencies,
+  p.constituency_id,
+  p.id                AS place_id,
+  p.name              AS place_name,
+  pm.monitor_names,
+  COUNT(DISTINCT da.id)                                              AS total_agents,
+  COUNT(DISTINCT CASE WHEN ac.wa       THEN da.id END)              AS wa_done,
+  COUNT(DISTINCT CASE WHEN ac.fb       THEN da.id END)              AS fb_done,
+  COUNT(DISTINCT CASE WHEN ac.ig       THEN da.id END)              AS ig_done,
+  COUNT(DISTINCT CASE WHEN ac.all_done THEN da.id END)              AS all_done
+FROM daily_content dc
+JOIN digital_agents da
+  ON (dc.target_constituencies IS NULL
+      OR da.constituency_id = ANY(dc.target_constituencies))
+JOIN places p
+  ON  p.constituency_id = da.constituency_id
+  AND da.booth_number BETWEEN p.booth_from AND p.booth_to
+LEFT JOIN place_monitors pm ON pm.place_id = p.id
+LEFT JOIN agent_compliance ac
+  ON ac.agent_id = da.id AND ac.content_id = dc.id
+GROUP BY
+  dc.id, dc.content_date, dc.title, dc.target_constituencies,
+  p.constituency_id, p.id, p.name, pm.monitor_names;
+
+GRANT SELECT ON place_content_stats TO authenticated;
+
+-- ============================================================
+-- QUICK RUN: paste into Supabase SQL Editor to add place_content_stats
+-- without re-running the full setup script:
+-- ============================================================
+-- DROP VIEW IF EXISTS place_content_stats;
+-- CREATE OR REPLACE VIEW place_content_stats AS
+-- WITH place_monitors AS (
+--   SELECT p.id AS place_id,
+--     string_agg(prof.full_name, ', ' ORDER BY prof.full_name) AS monitor_names
+--   FROM places p
+--   JOIN monitor_booth_assignments mba
+--     ON mba.constituency_id = p.constituency_id
+--     AND mba.booth_from <= p.booth_to AND mba.booth_to >= p.booth_from
+--   JOIN profiles prof ON prof.id = mba.monitor_id
+--   GROUP BY p.id
+-- )
+-- SELECT dc.id AS content_id, dc.content_date, dc.title,
+--   dc.target_constituencies, p.constituency_id,
+--   p.id AS place_id, p.name AS place_name, pm.monitor_names,
+--   COUNT(DISTINCT da.id) AS total_agents,
+--   COUNT(DISTINCT CASE WHEN ac.wa THEN da.id END) AS wa_done,
+--   COUNT(DISTINCT CASE WHEN ac.fb THEN da.id END) AS fb_done,
+--   COUNT(DISTINCT CASE WHEN ac.ig THEN da.id END) AS ig_done,
+--   COUNT(DISTINCT CASE WHEN ac.all_done THEN da.id END) AS all_done
+-- FROM daily_content dc
+-- JOIN digital_agents da
+--   ON (dc.target_constituencies IS NULL OR da.constituency_id = ANY(dc.target_constituencies))
+-- JOIN places p
+--   ON p.constituency_id = da.constituency_id
+--   AND da.booth_number BETWEEN p.booth_from AND p.booth_to
+-- LEFT JOIN place_monitors pm ON pm.place_id = p.id
+-- LEFT JOIN agent_compliance ac ON ac.agent_id = da.id AND ac.content_id = dc.id
+-- GROUP BY dc.id, dc.content_date, dc.title, dc.target_constituencies,
+--   p.constituency_id, p.id, p.name, pm.monitor_names;
+-- GRANT SELECT ON place_content_stats TO authenticated;
+-- ============================================================
+
+-- ============================================================
 -- VIEW: monitor_field_ops_stats
 -- Pre-aggregated per monitor for the Field Ops tab.
 -- Computes vacant_booths and link_issues in the DB using generate_series
