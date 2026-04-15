@@ -251,8 +251,9 @@ export default function SuperAdminPage() {
   const placesFileRef = useRef(null)
 
   // Dashboard — place performance (loaded with loadDateCompliance, instant from view)
-  const [allPlaceStats, setAllPlaceStats]       = useState([])   // rows from place_content_stats
-  const [placeViewConstId, setPlaceViewConstId] = useState(null) // selected constituency in the place panel
+  const [allPlaceStats, setAllPlaceStats]         = useState([])    // rows from place_content_stats
+  const [placeStatsLoaded, setPlaceStatsLoaded]   = useState(false) // true once first load attempted
+  const [placeViewConstId, setPlaceViewConstId]   = useState(null)  // selected constituency in the place panel
 
   // Per-constituency selected content filter in dashboard drill-down
 
@@ -354,10 +355,11 @@ export default function SuperAdminPage() {
           .select('content_id, monitor_id, total_agents, wa_done, fb_done, ig_done, all_done')
           .eq('content_date', selectedDate),
         client.from('place_content_stats')
-          .select('content_id, constituency_id, place_id, place_name, monitor_names, total_agents, wa_done, fb_done, ig_done, all_done')
+          .select('content_id, constituency_id, place_name, monitor_names, total_agents, wa_done, fb_done, ig_done, all_done')
           .eq('content_date', selectedDate),
       ])
       if (monRes.error) throw monRes.error
+      if (placeRes.error) throw placeRes.error
 
       const monMap = {}
       for (const row of monRes.data ?? []) {
@@ -368,7 +370,9 @@ export default function SuperAdminPage() {
       }
       setMonitorLogMap(monMap)
       setAllPlaceStats(placeRes.data ?? [])
+      setPlaceStatsLoaded(true)
     } catch (e) {
+      setPlaceStatsLoaded(true)
       setError(e.message)
     }
   }
@@ -887,7 +891,7 @@ export default function SuperAdminPage() {
           )}
 
           {/* ── Place Performance (from place_content_stats view — instant, no extra fetch) ── */}
-          {allPlaceStats.length > 0 && (
+          {placeStatsLoaded && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
                 <p className="font-semibold text-gray-900">Place Performance</p>
@@ -902,7 +906,9 @@ export default function SuperAdminPage() {
                 </select>
               </div>
 
-              {!placeViewConstId ? (
+              {allPlaceStats.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-gray-400 text-center">No place data for this date. Make sure content was added and the place_content_stats view exists in Supabase.</p>
+              ) : !placeViewConstId ? (
                 <p className="px-4 py-6 text-sm text-gray-400 text-center">Select a constituency above to see place-wise WA/FB/IG compliance.</p>
               ) : (() => {
                 // Group by place_name (same name = same place across multiple booth ranges)
