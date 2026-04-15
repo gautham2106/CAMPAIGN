@@ -1,4 +1,6 @@
 import * as XLSX from 'xlsx'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 function isValidLink(url) {
   if (!url || !url.trim()) return false
@@ -469,4 +471,110 @@ export function exportPlacePerformanceReport({ constituencies, agentsMap, monito
     : `all_constituencies_place_performance_${date}.xlsx`
 
   XLSX.writeFile(wb, fname)
+}
+
+/**
+ * Export a place-wise performance PDF.
+ *
+ * @param {object} opts
+ * @param {string}   opts.constituencyName  - e.g. "Vadapalani"
+ * @param {string}   opts.date              - ISO date string
+ * @param {string|null} opts.postTitle      - title of filtered post, or null for all posts
+ * @param {Array}    opts.rows              - pre-computed rows:
+ *   [{ place_name, monitor_names, total, wa, fb, ig, contentCount }]
+ *   wa/fb/ig are cumulative done counts across selected content items.
+ */
+export function exportPlacePerformancePDF({ constituencyName, date, postTitle, rows }) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+  const pageW = doc.internal.pageSize.getWidth()
+
+  // ── Header ──────────────────────────────────────────────────────────────
+  doc.setFillColor(24, 24, 27)           // zinc-950
+  doc.rect(0, 0, pageW, 22, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(13)
+  doc.setFont('helvetica', 'bold')
+  doc.text('Place Performance Report', 14, 10)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`${constituencyName}  ·  ${date}${postTitle ? `  ·  Post: ${postTitle}` : '  ·  All Posts'}`, 14, 17)
+
+  // ── Summary stats ────────────────────────────────────────────────────────
+  doc.setTextColor(30, 30, 30)
+  doc.setFontSize(8.5)
+  doc.setFont('helvetica', 'normal')
+
+  const totalPlaces = rows.length
+  const avgOf = rows.map(r => {
+    const opp = r.total * r.contentCount || 1
+    const pct = n => Math.round(n / opp * 100)
+    return Math.round((pct(r.wa) + pct(r.fb) + pct(r.ig)) / 3)
+  })
+  const overallAvg = avgOf.length ? Math.round(avgOf.reduce((s, v) => s + v, 0) / avgOf.length) : 0
+  const goodPlaces = avgOf.filter(v => v >= 80).length
+
+  doc.text(`Total places: ${totalPlaces}    Overall avg: ${overallAvg}%    Places ≥80%: ${goodPlaces}`, 14, 29)
+
+  // ── Table ───────────────────────────────────────────────────────────────
+  const tableRows = rows.map(r => {
+    const opp = r.total * r.contentCount || 1
+    const pct = n => `${Math.round(n / opp * 100)}%`
+    const avg = Math.round(
+      (Math.round(r.wa / opp * 100) + Math.round(r.fb / opp * 100) + Math.round(r.ig / opp * 100)) / 3
+    )
+    return [
+      r.place_name,
+      r.monitor_names || '—',
+      String(r.total),
+      pct(r.wa),
+      pct(r.fb),
+      pct(r.ig),
+      `${avg}%`,
+    ]
+  })
+
+  autoTable(doc, {
+    startY: 33,
+    head: [['Place', 'Monitor(s)', 'Agents', 'WA %', 'FB %', 'IG %', 'Avg %']],
+    body: tableRows,
+    styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak' },
+    headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    columnStyles: {
+      0: { cellWidth: 42 },
+      1: { cellWidth: 52 },
+      2: { cellWidth: 16, halign: 'center' },
+      3: { cellWidth: 18, halign: 'center' },
+      4: { cellWidth: 18, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center' },
+      6: { cellWidth: 18, halign: 'center' },
+    },
+    didParseCell(data) {
+      if (data.section === 'body' && data.column.index === 6) {
+        const val = parseInt(data.cell.raw)
+        if (val >= 80)      { data.cell.styles.textColor = [22, 163, 74];  data.cell.styles.fontStyle = 'bold' }
+        else if (val >= 50) { data.cell.styles.textColor = [161, 98, 7];   data.cell.styles.fontStyle = 'bold' }
+        else if (val > 0)   { data.cell.styles.textColor = [220, 38, 38];  data.cell.styles.fontStyle = 'bold' }
+        else                { data.cell.styles.textColor = [156, 163, 175] }
+      }
+    },
+    alternateRowStyles: { fillColor: [248, 249, 250] },
+    margin: { left: 14, right: 14 },
+  })
+
+  // ── Footer ───────────────────────────────────────────────────────────────
+  const pageCount = doc.getNumberOfPages()
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i)
+    doc.setFontSize(7)
+    doc.setTextColor(150)
+    doc.text(
+      `Page ${i} of ${pageCount}  ·  Generated ${new Date().toLocaleString('en-IN')}`,
+      pageW / 2, doc.internal.pageSize.getHeight() - 6,
+      { align: 'center' }
+    )
+  }
+
+  const safeName = constituencyName.replace(/[^a-z0-9]/gi, '_')
+  doc.save(`${safeName}_place_performance_${date}.pdf`)
 }

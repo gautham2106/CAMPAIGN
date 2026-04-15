@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -658,6 +658,34 @@ export default function SuperAdminPage() {
     }
   }
 
+  function handlePlacePDF() {
+    if (!placeViewConstId) return
+    const constName = constituencies.find(c => c.id === placeViewConstId)?.name ?? 'Constituency'
+    const groups = {}
+    for (const row of allPlaceStats) {
+      if (row.constituency_id !== placeViewConstId) continue
+      if (placeContentId && row.content_id !== placeContentId) continue
+      if (!groups[row.place_name]) {
+        groups[row.place_name] = { place_name: row.place_name, monitor_names: row.monitor_names, total: row.total_agents, wa: 0, fb: 0, ig: 0, contentCount: 0 }
+      }
+      groups[row.place_name].wa += row.wa_done
+      groups[row.place_name].fb += row.fb_done
+      groups[row.place_name].ig += row.ig_done
+      groups[row.place_name].contentCount++
+    }
+    const rows = Object.values(groups).sort((a, b) => {
+      const opp = n => n.total * n.contentCount || 1
+      const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
+      return overall(b) - overall(a)
+    })
+    exportPlacePerformancePDF({
+      constituencyName: constName,
+      date: selectedDate,
+      postTitle: placeContentId ? (dateContents.find(c => c.id === placeContentId)?.title ?? null) : null,
+      rows,
+    })
+  }
+
   async function handleRenameConst(id, name) {
     if (!name.trim()) return
     const { error } = await supabase.from('constituencies').update({ name: name.trim() }).eq('id', id)
@@ -894,18 +922,29 @@ export default function SuperAdminPage() {
           {/* ── Place Performance (from place_content_stats view — instant, no extra fetch) ── */}
           {placeStatsLoaded && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              {/* Header row: title + constituency picker */}
+              {/* Header row: title + constituency picker + PDF button */}
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
                 <p className="font-semibold text-gray-900">Place Performance</p>
-                <select
-                  value={placeViewConstId ?? ''}
-                  onChange={e => { setPlaceViewConstId(e.target.value || null); setPlaceContentId(null) }}
-                  className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
-                >
-                  <option value="">Select constituency…</option>
-                  {constituencies.filter(c => allPlaceStats.some(r => r.constituency_id === c.id))
-                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <div className="flex items-center gap-2">
+                  {placeViewConstId && allPlaceStats.some(r => r.constituency_id === placeViewConstId) && (
+                    <button
+                      onClick={handlePlacePDF}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                      title="Download place performance PDF"
+                    >
+                      ⬇ PDF
+                    </button>
+                  )}
+                  <select
+                    value={placeViewConstId ?? ''}
+                    onChange={e => { setPlaceViewConstId(e.target.value || null); setPlaceContentId(null) }}
+                    className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                  >
+                    <option value="">Select constituency…</option>
+                    {constituencies.filter(c => allPlaceStats.some(r => r.constituency_id === c.id))
+                      .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
               </div>
 
               {/* Post / content filter chips — visible once a constituency is chosen */}

@@ -8,7 +8,7 @@ import BulkAssign from '../components/BulkAssign'
 import CreateMonitorModal from '../components/CreateMonitorModal'
 import BulkMonitorImport from '../components/BulkMonitorImport'
 import MiniCalendar from '../components/MiniCalendar'
-import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF } from '../lib/exportUtils'
 import AddContentModal from '../components/AddContentModal'
 
 function isValidLink(url) {
@@ -861,6 +861,32 @@ export default function ConstituencyAdminPage() {
     }
   }
 
+  function handlePlacePDF() {
+    // Build grouped rows from current placeStats (respecting placeContentId filter)
+    const groups = {}
+    for (const row of placeStats) {
+      if (placeContentId && row.content_id !== placeContentId) continue
+      if (!groups[row.place_name]) {
+        groups[row.place_name] = { place_name: row.place_name, monitor_names: row.monitor_names, total: row.total_agents, wa: 0, fb: 0, ig: 0, contentCount: 0 }
+      }
+      groups[row.place_name].wa += row.wa_done
+      groups[row.place_name].fb += row.fb_done
+      groups[row.place_name].ig += row.ig_done
+      groups[row.place_name].contentCount++
+    }
+    const rows = Object.values(groups).sort((a, b) => {
+      const opp = n => n.total * n.contentCount || 1
+      const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
+      return overall(b) - overall(a)
+    })
+    exportPlacePerformancePDF({
+      constituencyName: profile?.constituencies?.name ?? 'Constituency',
+      date: selectedDate,
+      postTitle: placeContentId ? (contents.find(c => c.id === placeContentId)?.title ?? null) : null,
+      rows,
+    })
+  }
+
   if (loading) {
     return (
       <Layout title={profile?.constituencies?.name}>
@@ -1041,8 +1067,17 @@ export default function ConstituencyAdminPage() {
 
               {/* ── Place Performance ── */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100">
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
                   <h3 className="font-bold text-gray-900">Place Performance</h3>
+                  {placeStats.length > 0 && (
+                    <button
+                      onClick={handlePlacePDF}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                      title="Download place performance PDF"
+                    >
+                      ⬇ PDF
+                    </button>
+                  )}
                 </div>
 
                 {/* Post chips inside place section */}
