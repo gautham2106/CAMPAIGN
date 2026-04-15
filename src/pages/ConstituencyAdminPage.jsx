@@ -202,7 +202,9 @@ export default function ConstituencyAdminPage() {
   const [perfData, setPerfData] = useState(null)
   const [perfLoading, setPerfLoading] = useState(false)
   const [showPerf, setShowPerf] = useState(false)
-  const [overviewContentId, setOverviewContentId] = useState(null) // null = All contents
+  const [overviewContentId, setOverviewContentId] = useState(null) // filter for monitor section
+  const [placeContentId, setPlaceContentId]       = useState(null) // filter for place section
+  const [showMonitors, setShowMonitors]           = useState(false) // monitor section collapsed by default
 
   // CRUD state
   const [showAddAgent, setShowAddAgent] = useState(false)
@@ -1005,7 +1007,7 @@ export default function ConstituencyAdminPage() {
               <div className="mt-2 max-w-sm">
                 <MiniCalendar
                   value={selectedDate}
-                  onChange={d => { setSelectedDate(d); setShowCalendar(false); setOverviewContentId(null) }}
+                  onChange={d => { setSelectedDate(d); setShowCalendar(false); setOverviewContentId(null); setPlaceContentId(null) }}
                   markedDates={allContentDates}
                 />
               </div>
@@ -1024,319 +1026,282 @@ export default function ConstituencyAdminPage() {
             </div>
           ) : (
             <>
-              {/* Content selector — "All" + one chip per content */}
-              {contents.length > 0 && (
-                <div className="flex gap-2 overflow-x-auto pb-1 -mx-0.5 px-0.5">
-                  <button
-                    onClick={() => setOverviewContentId(null)}
-                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
-                      overviewContentId === null
-                        ? 'bg-zinc-900 text-white border-zinc-900'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
-                    }`}
-                  >
-                    All ({contents.length})
-                  </button>
-                  {contents.map((c, i) => (
-                    <button
-                      key={c.id}
-                      onClick={() => setOverviewContentId(c.id)}
-                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors max-w-[160px] truncate ${
-                        overviewContentId === c.id
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
-                      }`}
-                      title={c.title}
-                    >
-                      {i + 1}. {c.title.length > 18 ? c.title.slice(0, 18) + '…' : c.title}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Alert banner for lagging monitors */}
+              {/* ── Alert banner for lagging monitors (always reflects all posts) ── */}
               {(() => {
-                const lagging = monitors.filter(m => {
-                  const s = getMonitorStats(m.id, overviewContentId)
-                  return s.total > 0 && s.donePct === 0
-                })
-                const behind = monitors.filter(m => {
-                  const s = getMonitorStats(m.id, overviewContentId)
-                  return s.total > 0 && s.donePct > 0 && s.donePct < 50
-                })
+                const lagging = monitors.filter(m => { const s = getMonitorStats(m.id, null); return s.total > 0 && s.donePct === 0 })
+                const behind  = monitors.filter(m => { const s = getMonitorStats(m.id, null); return s.total > 0 && s.donePct > 0 && s.donePct < 50 })
                 if (!lagging.length && !behind.length) return null
                 return (
                   <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 space-y-1">
-                    {lagging.length > 0 && (
-                      <p className="text-sm font-semibold text-red-700">
-                        🚨 {lagging.length} monitor{lagging.length > 1 ? 's' : ''} at 0% — no agents verified yet: {lagging.map(m => m.full_name).join(', ')}
-                      </p>
-                    )}
-                    {behind.length > 0 && (
-                      <p className="text-sm text-red-600">
-                        ⚠ {behind.length} monitor{behind.length > 1 ? 's' : ''} below 50%: {behind.map(m => m.full_name).join(', ')}
-                      </p>
-                    )}
+                    {lagging.length > 0 && <p className="text-sm font-semibold text-red-700">🚨 {lagging.length} monitor{lagging.length > 1 ? 's' : ''} at 0% — no agents verified yet: {lagging.map(m => m.full_name).join(', ')}</p>}
+                    {behind.length  > 0 && <p className="text-sm text-red-600">⚠ {behind.length} monitor{behind.length > 1 ? 's' : ''} below 50%: {behind.map(m => m.full_name).join(', ')}</p>}
                   </div>
                 )
               })()}
 
-              {/* Monitor performance cards — sorted worst first */}
-              <div>
-                <h3 className="font-bold text-gray-900 mb-1">Monitor Performance</h3>
-                {overviewContentId && (
-                  <p className="text-xs text-indigo-600 font-medium mb-3">
-                    Filtered: {contents.find(c => c.id === overviewContentId)?.title}
-                  </p>
-                )}
-                <div className="space-y-3">
-                  {[...monitors]
-                    .map(m => ({ m, stats: getMonitorStats(m.id, overviewContentId) }))
-                    .sort((a, b) => a.stats.donePct - b.stats.donePct)
-                    .map(({ m, stats }) => {
-                    const statusColor = stats.donePct === 100 ? 'border-green-200 bg-green-50' : stats.donePct > 50 ? 'border-yellow-200 bg-yellow-50' : stats.total > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'
-                    const phone = m.phone?.replace(/\D/g, '') || ''
-                    const mAgents = agents.filter(a => a.assigned_monitor_id === m.id)
-
-                    return (
-                      <div key={m.id} className={`bg-white rounded-xl border p-4 ${statusColor}`}>
-                        <div className="flex items-start justify-between mb-3 gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-gray-900">{m.full_name}</p>
-                            {(() => { const ps = getMonitorPlaces(m.id); return ps.length > 0 && <p className="text-xs text-indigo-500 mt-0.5">{ps.join(' · ')}</p> })()}
-                            <p className="text-xs text-gray-500">{stats.total} agents</p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {phone && stats.total > 0 && stats.donePct < 80 && (
-                              <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
-                                target="_blank" rel="noopener noreferrer"
-                                title="WhatsApp monitor to follow up"
-                                className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">
-                                💬 Remind
-                              </a>
-                            )}
-                            {/* Platform % chips — WA / FB / IG */}
-                            {stats.total > 0 ? (
-                              <div className="flex gap-2">
-                                {[
-                                  { label: 'WA', pct: stats.platformPct?.whatsapp ?? 0, color: 'text-emerald-600' },
-                                  { label: 'FB', pct: stats.platformPct?.facebook  ?? 0, color: 'text-blue-600' },
-                                  { label: 'IG', pct: stats.platformPct?.instagram  ?? 0, color: 'text-pink-600' },
-                                ].map(({ label, pct, color }) => (
-                                  <div key={label} className="text-center min-w-[34px]">
-                                    <div className={`text-sm font-bold ${color}`}>{pct}%</div>
-                                    <div className="text-xs text-gray-400">{label}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : <span className="text-gray-400 text-sm">—</span>}
-                          </div>
-                        </div>
-
-                        {/* Platform progress bars */}
-                        {stats.total > 0 && (
-                          <div className="space-y-1.5 border-t border-gray-100/80 pt-3">
-                            {[
-                              { p: 'whatsapp', label: 'WA', barColor: 'bg-emerald-400' },
-                              { p: 'facebook',  label: 'FB', barColor: 'bg-blue-400' },
-                              { p: 'instagram', label: 'IG', barColor: 'bg-pink-400' },
-                            ].map(({ p, label, barColor }) => (
-                              <div key={p} className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-gray-500 w-6">{label}</span>
-                                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${stats.platformPct[p] ?? 0}%` }} />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Per-content breakdown — all contents shown, selected one highlighted */}
-                        {contents.length > 0 && stats.total > 0 && (
-                          <div className="flex gap-2 mt-3 flex-wrap">
-                            {contents.map(c => {
-                              const doneCnt = mAgents.filter(a =>
-                                PLATFORMS.every(p => logMap[a.id]?.[c.id]?.[p]?.is_checked)
-                              ).length
-                              const isSelected = overviewContentId === c.id
-                              const allDone = doneCnt === mAgents.length
-                              return (
-                                <button
-                                  key={c.id}
-                                  onClick={() => setOverviewContentId(overviewContentId === c.id ? null : c.id)}
-                                  title={c.title}
-                                  className={`text-xs rounded-lg px-2 py-1 border transition-colors ${
-                                    isSelected
-                                      ? 'bg-indigo-600 text-white border-indigo-600'
-                                      : allDone
-                                      ? 'bg-green-50 border-green-200 text-green-700'
-                                      : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
-                                  }`}
-                                >
-                                  <span className="opacity-70">{c.title.slice(0, 10)}{c.title.length > 10 ? '…' : ''} </span>
-                                  <span className="font-bold">{doneCnt}/{mAgents.length}</span>
-                                </button>
-                              )
-                            })}
-                          </div>
-                        )}
-
-                        <button
-                          onClick={() => setDrillMonitor({
-                            monitor: m,
-                            agents: mAgents,
-                            contentIds: overviewContentId ? [overviewContentId] : contents.map(c => c.id),
-                          })}
-                          className="mt-3 text-xs text-indigo-600 font-medium hover:underline"
-                        >
-                          View agents →
-                        </button>
-                      </div>
-                    )
-                  })}
-                  {monitors.length === 0 && (
-                    <p className="text-gray-400 text-sm text-center py-8">No monitors yet.</p>
-                  )}
+              {/* ── Place Performance ── */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100">
+                  <h3 className="font-bold text-gray-900">Place Performance</h3>
                 </div>
-              </div>
 
-              {/* ── Place Performance (from place_content_stats view) ── */}
-              {placeStats.length > 0 && (() => {
-                // Group rows by place_name (same name = same place, even across multiple booth ranges)
-                const groups = {}
-                for (const row of placeStats) {
-                  if (overviewContentId && row.content_id !== overviewContentId) continue
-                  if (!groups[row.place_name]) {
-                    groups[row.place_name] = {
-                      place_name:    row.place_name,
-                      monitor_names: row.monitor_names,
-                      total:         row.total_agents,
-                      wa: 0, fb: 0, ig: 0, contentCount: 0,
+                {/* Post chips inside place section */}
+                {contents.length > 1 && (
+                  <div className="px-4 py-2.5 border-b border-gray-100 flex gap-2 overflow-x-auto">
+                    <button
+                      onClick={() => setPlaceContentId(null)}
+                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                        placeContentId === null ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                      }`}
+                    >All posts</button>
+                    {contents.map((c, i) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setPlaceContentId(c.id)}
+                        className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors max-w-[180px] truncate ${
+                          placeContentId === c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                        }`}
+                        title={c.title}
+                      >Post {i + 1}: {c.title}</button>
+                    ))}
+                  </div>
+                )}
+
+                {placeStats.length === 0 ? (
+                  <p className="px-4 py-8 text-sm text-gray-400 text-center">No place data for this date.</p>
+                ) : (() => {
+                  const groups = {}
+                  for (const row of placeStats) {
+                    if (placeContentId && row.content_id !== placeContentId) continue
+                    if (!groups[row.place_name]) {
+                      groups[row.place_name] = { place_name: row.place_name, monitor_names: row.monitor_names, total: row.total_agents, wa: 0, fb: 0, ig: 0, contentCount: 0 }
                     }
+                    groups[row.place_name].wa += row.wa_done
+                    groups[row.place_name].fb += row.fb_done
+                    groups[row.place_name].ig += row.ig_done
+                    groups[row.place_name].contentCount++
                   }
-                  groups[row.place_name].wa += row.wa_done
-                  groups[row.place_name].fb += row.fb_done
-                  groups[row.place_name].ig += row.ig_done
-                  groups[row.place_name].contentCount++
-                }
-                // Sort by overall % descending (worst last)
-                const rows = Object.values(groups).sort((a, b) => {
-                  const opp = n => n.total * n.contentCount || 1
-                  const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
-                  return overall(b) - overall(a)
-                })
-                if (!rows.length) return null
-                return (
-                  <div>
-                    <h3 className="font-bold text-gray-900 mb-3">Place Performance</h3>
-                    <div className="space-y-2">
+                  const rows = Object.values(groups).sort((a, b) => {
+                    const opp = n => n.total * n.contentCount || 1
+                    const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
+                    return overall(b) - overall(a)
+                  })
+                  if (!rows.length) return <p className="px-4 py-8 text-sm text-gray-400 text-center">No places configured.</p>
+                  return (
+                    <div className="divide-y divide-gray-50">
                       {rows.map(g => {
                         const opp = g.total * g.contentCount
                         const p = n => opp ? Math.round(n / opp * 100) : 0
                         const waP = p(g.wa), fbP = p(g.fb), igP = p(g.ig)
                         const avg = Math.round((waP + fbP + igP) / 3)
-                        const border = avg >= 80 ? 'border-green-200 bg-green-50'
-                          : avg >= 50 ? 'border-yellow-200 bg-yellow-50'
-                          : avg > 0  ? 'border-red-200 bg-red-50'
-                          : 'border-gray-200'
+                        const border = avg >= 80 ? 'border-green-200 bg-green-50' : avg >= 50 ? 'border-yellow-200 bg-yellow-50' : avg > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'
                         return (
-                          <div key={g.place_name} className={`bg-white rounded-xl border p-4 ${border}`}>
+                          <div key={g.place_name} className={`p-4 border-l-4 ${border}`}>
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-gray-900 text-sm">{g.place_name}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">
-                                  {g.total} agents{g.monitor_names ? ` · ${g.monitor_names}` : ''}
-                                </p>
+                                <p className="text-xs text-gray-500 mt-0.5">{g.total} agents{g.monitor_names ? ` · ${g.monitor_names}` : ''}</p>
                               </div>
                               <div className="flex items-center gap-3 shrink-0">
-                                <div className={`text-sm font-bold px-2 py-0.5 rounded-full ${
-                                  avg >= 80 ? 'bg-green-100 text-green-700' : avg >= 50 ? 'bg-yellow-100 text-yellow-700' : avg > 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'
-                                }`}>{avg}%</div>
+                                <div className={`text-sm font-bold px-2 py-0.5 rounded-full ${avg >= 80 ? 'bg-green-100 text-green-700' : avg >= 50 ? 'bg-yellow-100 text-yellow-700' : avg > 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>{avg}%</div>
                                 <div className="flex gap-3">
-                                {[
-                                  { label: 'WA', val: waP, color: 'text-emerald-600' },
-                                  { label: 'FB', val: fbP, color: 'text-blue-600' },
-                                  { label: 'IG', val: igP, color: 'text-pink-600' },
-                                ].map(({ label, val, color }) => (
-                                  <div key={label} className="text-center min-w-[34px]">
-                                    <div className={`text-sm font-bold ${color}`}>{val}%</div>
-                                    <div className="text-xs text-gray-400">{label}</div>
-                                  </div>
-                                ))}
-                                </div>{/* end flex gap-3 */}
-                              </div>{/* end items-center gap-3 */}
+                                  {[{ label: 'WA', val: waP, color: 'text-emerald-600' }, { label: 'FB', val: fbP, color: 'text-blue-600' }, { label: 'IG', val: igP, color: 'text-pink-600' }].map(({ label, val, color }) => (
+                                    <div key={label} className="text-center min-w-[34px]">
+                                      <div className={`text-sm font-bold ${color}`}>{val}%</div>
+                                      <div className="text-xs text-gray-400">{label}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         )
                       })}
                     </div>
-                  </div>
-                )
-              })()}
+                  )
+                })()}
+              </div>
 
-              {/* Performance history toggle */}
-              <div className="border-t pt-4">
+              {/* ── Monitor Performance (collapsible) ── */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <button
-                  onClick={() => { setShowPerf(v => !v); if (!showPerf) loadPerformance() }}
-                  className="flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                  onClick={() => setShowMonitors(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
                 >
-                  📊 {showPerf ? 'Hide' : 'Show'} 30-day Team Performance
+                  <span className="font-bold text-gray-900">Monitor Performance</span>
+                  <span className="text-gray-400 text-sm">{showMonitors ? '▲ Hide' : '▼ Show'}</span>
                 </button>
 
-                {showPerf && (
-                  <div className="mt-4">
-                    {perfLoading ? (
-                      <p className="text-gray-400 text-sm">Loading…</p>
-                    ) : !perfData ? null : (
-                      <div className="space-y-3">
-                        {monitors.map(m => {
-                          const mp = perfData.monitors?.[m.id]
-                          if (!mp) return null
+                {showMonitors && (
+                  <div className="border-t border-gray-100">
+                    {/* Post chips inside monitor section */}
+                    {contents.length > 1 && (
+                      <div className="px-4 py-2.5 border-b border-gray-100 flex gap-2 overflow-x-auto">
+                        <button
+                          onClick={() => setOverviewContentId(null)}
+                          className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                            overviewContentId === null ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                          }`}
+                        >All posts</button>
+                        {contents.map((c, i) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setOverviewContentId(c.id)}
+                            className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors max-w-[180px] truncate ${
+                              overviewContentId === c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                            }`}
+                            title={c.title}
+                          >Post {i + 1}: {c.title}</button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Monitor cards */}
+                    <div className="p-4 space-y-3">
+                      {[...monitors]
+                        .map(m => ({ m, stats: getMonitorStats(m.id, overviewContentId) }))
+                        .sort((a, b) => a.stats.donePct - b.stats.donePct)
+                        .map(({ m, stats }) => {
+                          const statusColor = stats.donePct === 100 ? 'border-green-200 bg-green-50' : stats.donePct > 50 ? 'border-yellow-200 bg-yellow-50' : stats.total > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'
+                          const phone = m.phone?.replace(/\D/g, '') || ''
                           const mAgents = agents.filter(a => a.assigned_monitor_id === m.id)
                           return (
-                            <div key={m.id} className="bg-white rounded-xl border border-gray-200 p-4">
-                              <div className="flex items-center justify-between mb-3">
-                                <div>
+                            <div key={m.id} className={`bg-white rounded-xl border p-4 ${statusColor}`}>
+                              <div className="flex items-start justify-between mb-3 gap-3">
+                                <div className="flex-1 min-w-0">
                                   <p className="font-semibold text-gray-900">{m.full_name}</p>
-                                  {(() => { const ps = getMonitorPlaces(m.id); return ps.length > 0 && <p className="text-xs text-indigo-500">{ps.join(' · ')}</p> })()}
+                                  {(() => { const ps = getMonitorPlaces(m.id); return ps.length > 0 && <p className="text-xs text-indigo-500 mt-0.5">{ps.join(' · ')}</p> })()}
+                                  <p className="text-xs text-gray-500">{stats.total} agents</p>
                                 </div>
-                                <span className={`text-sm font-bold px-2 py-0.5 rounded-full ${
-                                  mp.avg >= 80 ? 'bg-green-100 text-green-700' : mp.avg >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'
-                                }`}>
-                                  {mp.avg}% avg
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 mb-3">
-                                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${mp.avg >= 80 ? 'bg-green-500' : mp.avg >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`} style={{ width: `${mp.avg}%` }} />
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {phone && stats.total > 0 && stats.donePct < 80 && (
+                                    <a href={`https://wa.me/${phone.length === 10 ? '91' + phone : phone}`}
+                                      target="_blank" rel="noopener noreferrer"
+                                      title="WhatsApp monitor to follow up"
+                                      className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">
+                                      💬 Remind
+                                    </a>
+                                  )}
+                                  {stats.total > 0 ? (
+                                    <div className="flex gap-2">
+                                      {[
+                                        { label: 'WA', pct: stats.platformPct?.whatsapp ?? 0, color: 'text-emerald-600' },
+                                        { label: 'FB', pct: stats.platformPct?.facebook  ?? 0, color: 'text-blue-600' },
+                                        { label: 'IG', pct: stats.platformPct?.instagram  ?? 0, color: 'text-pink-600' },
+                                      ].map(({ label, pct, color }) => (
+                                        <div key={label} className="text-center min-w-[34px]">
+                                          <div className={`text-sm font-bold ${color}`}>{pct}%</div>
+                                          <div className="text-xs text-gray-400">{label}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : <span className="text-gray-400 text-sm">—</span>}
                                 </div>
                               </div>
-                              {/* Top agents */}
-                              <div className="space-y-1.5">
-                                {[...mAgents]
-                                  .sort((a, b) => (perfData.agents?.[b.id]?.rate ?? 0) - (perfData.agents?.[a.id]?.rate ?? 0))
-                                  .slice(0, 5)
-                                  .map(a => {
-                                    const ap = perfData.agents?.[a.id]
-                                    return (
-                                      <div key={a.id} className="flex items-center gap-2">
-                                        <span className="text-xs text-gray-500 w-5">#{a.booth_number}</span>
-                                        <span className="text-xs text-gray-700 flex-1 truncate">{a.name}</span>
-                                        <span className={`text-xs font-bold w-8 text-right ${
-                                          (ap?.rate ?? 0) >= 80 ? 'text-green-600' : (ap?.rate ?? 0) >= 50 ? 'text-yellow-600' : 'text-red-500'
-                                        }`}>{ap?.rate ?? 0}%</span>
+                              {stats.total > 0 && (
+                                <div className="space-y-1.5 border-t border-gray-100/80 pt-3">
+                                  {[
+                                    { p: 'whatsapp', label: 'WA', barColor: 'bg-emerald-400' },
+                                    { p: 'facebook',  label: 'FB', barColor: 'bg-blue-400' },
+                                    { p: 'instagram', label: 'IG', barColor: 'bg-pink-400' },
+                                  ].map(({ p, label, barColor }) => (
+                                    <div key={p} className="flex items-center gap-2">
+                                      <span className="text-xs font-medium text-gray-500 w-6">{label}</span>
+                                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${stats.platformPct[p] ?? 0}%` }} />
                                       </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {contents.length > 0 && stats.total > 0 && (
+                                <div className="flex gap-2 mt-3 flex-wrap">
+                                  {contents.map(c => {
+                                    const doneCnt = mAgents.filter(a => PLATFORMS.every(p => logMap[a.id]?.[c.id]?.[p]?.is_checked)).length
+                                    const isSelected = overviewContentId === c.id
+                                    const allDone = doneCnt === mAgents.length
+                                    return (
+                                      <button
+                                        key={c.id}
+                                        onClick={() => setOverviewContentId(overviewContentId === c.id ? null : c.id)}
+                                        title={c.title}
+                                        className={`text-xs rounded-lg px-2 py-1 border transition-colors ${
+                                          isSelected ? 'bg-indigo-600 text-white border-indigo-600' : allDone ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
+                                        }`}
+                                      >
+                                        <span className="opacity-70">{c.title.slice(0, 10)}{c.title.length > 10 ? '…' : ''} </span>
+                                        <span className="font-bold">{doneCnt}/{mAgents.length}</span>
+                                      </button>
                                     )
                                   })}
-                                {mAgents.length > 5 && (
-                                  <p className="text-xs text-gray-400">+{mAgents.length - 5} more agents</p>
-                                )}
-                              </div>
+                                </div>
+                              )}
+                              <button
+                                onClick={() => setDrillMonitor({ monitor: m, agents: mAgents, contentIds: overviewContentId ? [overviewContentId] : contents.map(c => c.id) })}
+                                className="mt-3 text-xs text-indigo-600 font-medium hover:underline"
+                              >View agents →</button>
                             </div>
                           )
                         })}
-                      </div>
-                    )}
+                      {monitors.length === 0 && <p className="text-gray-400 text-sm text-center py-8">No monitors yet.</p>}
+                    </div>
+
+                    {/* 30-day history toggle */}
+                    <div className="border-t px-4 py-3">
+                      <button
+                        onClick={() => { setShowPerf(v => !v); if (!showPerf) loadPerformance() }}
+                        className="flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                      >
+                        📊 {showPerf ? 'Hide' : 'Show'} 30-day Team Performance
+                      </button>
+                      {showPerf && (
+                        <div className="mt-4">
+                          {perfLoading ? (
+                            <p className="text-gray-400 text-sm">Loading…</p>
+                          ) : !perfData ? null : (
+                            <div className="space-y-3">
+                              {monitors.map(m => {
+                                const mp = perfData.monitors?.[m.id]
+                                if (!mp) return null
+                                const mAgents = agents.filter(a => a.assigned_monitor_id === m.id)
+                                return (
+                                  <div key={m.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <div>
+                                        <p className="font-semibold text-gray-900">{m.full_name}</p>
+                                        {(() => { const ps = getMonitorPlaces(m.id); return ps.length > 0 && <p className="text-xs text-indigo-500">{ps.join(' · ')}</p> })()}
+                                      </div>
+                                      <span className={`text-sm font-bold px-2 py-0.5 rounded-full ${mp.avg >= 80 ? 'bg-green-100 text-green-700' : mp.avg >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'}`}>{mp.avg}% avg</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 mb-3">
+                                      <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full ${mp.avg >= 80 ? 'bg-green-500' : mp.avg >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`} style={{ width: `${mp.avg}%` }} />
+                                      </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {[...mAgents]
+                                        .sort((a, b) => (perfData.agents?.[b.id]?.rate ?? 0) - (perfData.agents?.[a.id]?.rate ?? 0))
+                                        .slice(0, 5)
+                                        .map(a => {
+                                          const ap = perfData.agents?.[a.id]
+                                          return (
+                                            <div key={a.id} className="flex items-center gap-2">
+                                              <span className="text-xs text-gray-500 w-5">#{a.booth_number}</span>
+                                              <span className="text-xs text-gray-700 flex-1 truncate">{a.name}</span>
+                                              <span className={`text-xs font-bold w-8 text-right ${(ap?.rate ?? 0) >= 80 ? 'text-green-600' : (ap?.rate ?? 0) >= 50 ? 'text-yellow-600' : 'text-red-500'}`}>{ap?.rate ?? 0}%</span>
+                                            </div>
+                                          )
+                                        })}
+                                      {mAgents.length > 5 && <p className="text-xs text-gray-400">+{mAgents.length - 5} more agents</p>}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
