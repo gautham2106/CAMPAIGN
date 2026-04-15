@@ -254,6 +254,7 @@ export default function SuperAdminPage() {
   const [allPlaceStats, setAllPlaceStats]         = useState([])    // rows from place_content_stats
   const [placeStatsLoaded, setPlaceStatsLoaded]   = useState(false) // true once first load attempted
   const [placeViewConstId, setPlaceViewConstId]   = useState(null)  // selected constituency in the place panel
+  const [placeContentId, setPlaceContentId]       = useState(null)  // null = all posts, or specific content_id
 
   // Per-constituency selected content filter in dashboard drill-down
 
@@ -268,7 +269,7 @@ export default function SuperAdminPage() {
   const [savingContent, setSavingContent] = useState(false)
 
   useEffect(() => { loadBase().then(() => loadDateCompliance()) }, [])
-  useEffect(() => { loadDateCompliance() }, [selectedDate])
+  useEffect(() => { setPlaceContentId(null); loadDateCompliance() }, [selectedDate])
 
   async function loadBase() {
     setLoading(true)
@@ -893,11 +894,12 @@ export default function SuperAdminPage() {
           {/* ── Place Performance (from place_content_stats view — instant, no extra fetch) ── */}
           {placeStatsLoaded && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              {/* Header row: title + constituency picker */}
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
                 <p className="font-semibold text-gray-900">Place Performance</p>
                 <select
                   value={placeViewConstId ?? ''}
-                  onChange={e => setPlaceViewConstId(e.target.value || null)}
+                  onChange={e => { setPlaceViewConstId(e.target.value || null); setPlaceContentId(null) }}
                   className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
                 >
                   <option value="">Select constituency…</option>
@@ -905,6 +907,40 @@ export default function SuperAdminPage() {
                     .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+
+              {/* Post / content filter chips — visible once a constituency is chosen */}
+              {placeViewConstId && dateContents.filter(c =>
+                !c.target_constituencies || c.target_constituencies.includes(placeViewConstId)
+              ).length > 1 && (
+                <div className="px-4 py-2.5 border-b border-gray-100 flex gap-2 overflow-x-auto">
+                  <button
+                    onClick={() => setPlaceContentId(null)}
+                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                      placeContentId === null
+                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    All posts
+                  </button>
+                  {dateContents
+                    .filter(c => !c.target_constituencies || c.target_constituencies.includes(placeViewConstId))
+                    .map((c, i) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setPlaceContentId(c.id)}
+                        className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors max-w-[180px] truncate ${
+                          placeContentId === c.id
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                        }`}
+                        title={c.title}
+                      >
+                        Post {i + 1}: {c.title}
+                      </button>
+                    ))}
+                </div>
+              )}
 
               {allPlaceStats.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-gray-400 text-center">No place data for this date. Make sure content was added and the place_content_stats view exists in Supabase.</p>
@@ -915,6 +951,7 @@ export default function SuperAdminPage() {
                 const groups = {}
                 for (const row of allPlaceStats) {
                   if (row.constituency_id !== placeViewConstId) continue
+                  if (placeContentId && row.content_id !== placeContentId) continue
                   if (!groups[row.place_name]) {
                     groups[row.place_name] = {
                       place_name: row.place_name,
