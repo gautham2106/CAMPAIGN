@@ -532,7 +532,7 @@ WITH place_monitors AS (
   SELECT
     p.constituency_id,
     p.name AS place_name,
-    string_agg(DISTINCT prof.full_name ORDER BY prof.full_name) AS monitor_names
+    string_agg(DISTINCT prof.full_name, ', ') AS monitor_names
   FROM places p
   JOIN monitor_booth_assignments mba
     ON  mba.constituency_id = p.constituency_id
@@ -580,7 +580,7 @@ GRANT SELECT ON place_content_stats TO authenticated;
 -- CREATE OR REPLACE VIEW place_content_stats AS
 -- WITH place_monitors AS (
 --   SELECT p.constituency_id, p.name AS place_name,
---     string_agg(DISTINCT prof.full_name ORDER BY prof.full_name) AS monitor_names
+--     string_agg(DISTINCT prof.full_name, ', ') AS monitor_names
 --   FROM places p
 --   JOIN monitor_booth_assignments mba
 --     ON mba.constituency_id = p.constituency_id
