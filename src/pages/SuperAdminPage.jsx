@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -242,6 +242,7 @@ export default function SuperAdminPage() {
   const [exporting, setExporting]           = useState(false)
   const [exportingPlace, setExportingPlace]   = useState(false)
   const [exportingPlacePerf, setExportingPlacePerf] = useState(false)
+  const [exportingMgmt, setExportingMgmt] = useState(false)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -684,6 +685,35 @@ export default function SuperAdminPage() {
       postTitle: placeContentId ? (dateContents.find(c => c.id === placeContentId)?.title ?? null) : null,
       rows,
     })
+  }
+
+  async function handleManagementReport() {
+    setExportingMgmt(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [constStatsRes, monStatsRes, profilesRes, agentsRes, contentsRes, logsRes, constRes] = await Promise.all([
+        client.from('constituency_content_stats').select('constituency_id,total_agents,wa_done,fb_done,ig_done').limit(500000),
+        client.from('monitor_content_stats').select('monitor_id,total_agents,wa_done,fb_done,ig_done').limit(500000),
+        client.from('profiles').select('id,full_name,phone,role,constituency_id').in('role', ['constituency_admin', 'monitor']).limit(10000),
+        client.from('digital_agents').select('id,name,phone,booth_number,constituency_id,assigned_monitor_id').order('booth_number').limit(100000),
+        client.from('daily_content').select('id,content_date,target_constituencies').limit(10000),
+        client.from('compliance_logs').select('agent_id,content_id,platform').eq('is_checked', true).limit(2000000),
+        client.from('constituencies').select('id,name').order('name').limit(1000),
+      ])
+      exportManagementReportPDF({
+        constituencies:  constRes.data ?? [],
+        constStatsRows:  constStatsRes.data ?? [],
+        monStatsRows:    monStatsRes.data ?? [],
+        profiles:        profilesRes.data ?? [],
+        agents:          agentsRes.data ?? [],
+        contents:        contentsRes.data ?? [],
+        complianceLogs:  logsRes.data ?? [],
+      })
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setExportingMgmt(false)
+    }
   }
 
   async function handleRenameConst(id, name) {
@@ -1312,6 +1342,24 @@ export default function SuperAdminPage() {
                 )
               })
             )}
+          </div>
+
+          {/* Management Report PDF */}
+          <div className="bg-zinc-950 rounded-xl p-5 space-y-3">
+            <div>
+              <p className="text-base font-bold text-white">Management Performance Report</p>
+              <p className="text-xs text-zinc-400 mt-1">
+                Comprehensive PDF for top management — all-time performance across every constituency, monitor, and digital agent.
+                Includes executive summary, constituency rankings, monitor percentages, and agent post counts.
+              </p>
+            </div>
+            <button
+              onClick={handleManagementReport}
+              disabled={exportingMgmt}
+              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors"
+            >
+              {exportingMgmt ? '⏳ Generating PDF…' : '⬇ Download Management Report PDF'}
+            </button>
           </div>
 
           {/* Master Excel Export */}
