@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF, exportConstituencyPDF } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF, exportConstituencyPDF, loadPDFFonts } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -244,6 +244,7 @@ export default function SuperAdminPage() {
   const [exportingPlacePerf, setExportingPlacePerf] = useState(false)
   const [exportingMgmt, setExportingMgmt] = useState(false)
   const [exportingSeparate, setExportingSeparate] = useState(false)
+  const [downloadingConstId, setDownloadingConstId] = useState(null)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -660,7 +661,7 @@ export default function SuperAdminPage() {
     }
   }
 
-  function handlePlacePDF() {
+  async function handlePlacePDF() {
     if (!placeViewConstId) return
     const constName = constituencies.find(c => c.id === placeViewConstId)?.name ?? 'Constituency'
     const groups = {}
@@ -680,54 +681,51 @@ export default function SuperAdminPage() {
       const overall = n => (n.wa + n.fb + n.ig) / (opp(n) * 3)
       return overall(b) - overall(a)
     })
+    const fonts = await loadPDFFonts()
     exportPlacePerformancePDF({
       constituencyName: constName,
       date: selectedDate,
       postTitle: placeContentId ? (dateContents.find(c => c.id === placeContentId)?.title ?? null) : null,
       rows,
+      fonts,
     })
+  }
+
+  async function fetchAllRows(client, createQuery) {
+    const PAGE = 1000
+    const all = []
+    let page = 0
+    while (true) {
+      const { data, error } = await createQuery().range(page * PAGE, (page + 1) * PAGE - 1)
+      if (error) throw error
+      if (!data?.length) break
+      all.push(...data)
+      if (data.length < PAGE) break
+      page++
+    }
+    return all
   }
 
   async function handleManagementReport() {
     setExportingMgmt(true)
     try {
       const client = supabaseAdmin ?? supabase
-
-      // Supabase enforces max_rows=1000 per request. Paginate large tables.
-      async function fetchAllRows(createQuery) {
-        const PAGE = 1000
-        const all = []
-        let page = 0
-        while (true) {
-          const { data, error } = await createQuery().range(page * PAGE, (page + 1) * PAGE - 1)
-          if (error) throw error
-          if (!data?.length) break
-          all.push(...data)
-          if (data.length < PAGE) break
-          page++
-        }
-        return all
-      }
-
-      // constituency_season_stats & monitor_season_stats: one row per entity — always <1000
-      // agent_season_stats: one row per agent — may exceed 1000, paginate
-      // admins: small table, one shot
-      const [constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+      const [fonts, constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+        loadPDFFonts(),
         client.from('constituency_season_stats').select('*'),
         client.from('monitor_season_stats').select('*'),
-        fetchAllRows(() => client.from('agent_season_stats').select('*').order('booth_number')),
+        fetchAllRows(client, () => client.from('agent_season_stats').select('*').order('booth_number')),
         client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
       ])
-
       if (constStats.error) throw constStats.error
       if (monitorStats.error) throw monitorStats.error
       if (adminsRes.error) throw adminsRes.error
-
       exportManagementReportPDF({
         constStats:   constStats.data ?? [],
         monitorStats: monitorStats.data ?? [],
         agentStats:   agentStatsRows,
         admins:       adminsRes.data ?? [],
+        fonts,
       })
     } catch (e) {
       setError(e.message)
@@ -740,56 +738,66 @@ export default function SuperAdminPage() {
     setExportingSeparate(true)
     try {
       const client = supabaseAdmin ?? supabase
-
-      async function fetchAllRows(createQuery) {
-        const PAGE = 1000
-        const all = []
-        let page = 0
-        while (true) {
-          const { data, error } = await createQuery().range(page * PAGE, (page + 1) * PAGE - 1)
-          if (error) throw error
-          if (!data?.length) break
-          all.push(...data)
-          if (data.length < PAGE) break
-          page++
-        }
-        return all
-      }
-
-      const [constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+      const [fonts, constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+        loadPDFFonts(),
         client.from('constituency_season_stats').select('*'),
         client.from('monitor_season_stats').select('*'),
-        fetchAllRows(() => client.from('agent_season_stats').select('*').order('booth_number')),
+        fetchAllRows(client, () => client.from('agent_season_stats').select('*').order('booth_number')),
         client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
       ])
-
       if (constStats.error) throw constStats.error
       if (monitorStats.error) throw monitorStats.error
       if (adminsRes.error) throw adminsRes.error
 
-      const allConsts    = constStats.data ?? []
-      const allMonitors  = monitorStats.data ?? []
-      const allAgents    = agentStatsRows
-      const allAdmins    = adminsRes.data ?? []
-
-      const adminMap = {}
+      const allConsts   = constStats.data ?? []
+      const allMonitors = monitorStats.data ?? []
+      const allAdmins   = adminsRes.data ?? []
+      const adminMap    = {}
       for (const a of allAdmins) adminMap[a.constituency_id] = a
 
-      // Download one PDF per constituency, 400 ms apart so the browser doesn't block them
       for (let i = 0; i < allConsts.length; i++) {
         const c = allConsts[i]
         await new Promise(resolve => setTimeout(resolve, i === 0 ? 0 : 400))
         exportConstituencyPDF({
           constRow:     c,
           monitorStats: allMonitors.filter(m => m.constituency_id === c.constituency_id),
-          agentStats:   allAgents.filter(a => a.constituency_id === c.constituency_id),
+          agentStats:   agentStatsRows.filter(a => a.constituency_id === c.constituency_id),
           admin:        adminMap[c.constituency_id] ?? null,
+          fonts,
         })
       }
     } catch (e) {
       setError(e.message)
     } finally {
       setExportingSeparate(false)
+    }
+  }
+
+  async function handleConstPDF(constId) {
+    setDownloadingConstId(constId)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [fonts, constRes, monRes, agentRows, adminRes] = await Promise.all([
+        loadPDFFonts(),
+        client.from('constituency_season_stats').select('*').eq('constituency_id', constId).single(),
+        client.from('monitor_season_stats').select('*').eq('constituency_id', constId),
+        fetchAllRows(client, () => client.from('agent_season_stats').select('*').eq('constituency_id', constId).order('booth_number')),
+        client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').eq('constituency_id', constId).maybeSingle(),
+      ])
+      if (constRes.error) throw constRes.error
+      if (monRes.error) throw monRes.error
+      if (adminRes.error) throw adminRes.error
+      exportConstituencyPDF({
+        constRow:     constRes.data,
+        monitorStats: monRes.data ?? [],
+        agentStats:   agentRows,
+        admin:        adminRes.data ?? null,
+        fonts,
+      })
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setDownloadingConstId(null)
     }
   }
 
@@ -1422,29 +1430,47 @@ export default function SuperAdminPage() {
           </div>
 
           {/* Management Report PDF */}
-          <div className="bg-zinc-950 rounded-xl p-5 space-y-3">
+          <div className="bg-zinc-950 rounded-xl p-5 space-y-4">
             <div>
               <p className="text-base font-bold text-white">Management Performance Report</p>
               <p className="text-xs text-zinc-400 mt-1">
                 Comprehensive PDF for top management — all-time performance across every constituency, monitor, and digital agent.
-                Includes executive summary, constituency rankings, monitor percentages, and agent post counts.
               </p>
             </div>
+
+            {/* Combined + all-separate buttons */}
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={handleManagementReport}
-                disabled={exportingMgmt || exportingSeparate}
-                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors"
+                disabled={exportingMgmt || exportingSeparate || !!downloadingConstId}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
               >
-                {exportingMgmt ? '⏳ Generating PDF…' : '⬇ Combined Report PDF'}
+                {exportingMgmt ? '⏳ Generating…' : '⬇ Combined PDF (all)'}
               </button>
               <button
                 onClick={handleSeparatePDFs}
-                disabled={exportingMgmt || exportingSeparate}
-                className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-500 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors"
+                disabled={exportingMgmt || exportingSeparate || !!downloadingConstId}
+                className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-500 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
               >
-                {exportingSeparate ? '⏳ Downloading…' : '⬇ Separate PDF per Constituency'}
+                {exportingSeparate ? '⏳ Downloading…' : '⬇ All as Separate PDFs'}
               </button>
+            </div>
+
+            {/* One button per constituency */}
+            <div>
+              <p className="text-xs text-zinc-400 mb-2 font-semibold uppercase tracking-wide">Download by Constituency</p>
+              <div className="flex flex-wrap gap-2">
+                {constituencies.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => handleConstPDF(c.id)}
+                    disabled={exportingMgmt || exportingSeparate || downloadingConstId !== null}
+                    className="px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors bg-zinc-800 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:opacity-50 text-white"
+                  >
+                    {downloadingConstId === c.id ? '⏳ …' : `⬇ ${c.name}`}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

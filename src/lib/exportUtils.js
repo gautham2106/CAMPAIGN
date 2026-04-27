@@ -473,19 +473,46 @@ export function exportPlacePerformanceReport({ constituencies, agentsMap, monito
   XLSX.writeFile(wb, fname)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF font helpers — Noto Sans Tamil supports Tamil Unicode + Latin
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _fontCache = null
+
+function arrayBufferToBase64(buffer) {
+  let binary = ''
+  const bytes = new Uint8Array(buffer)
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
+export async function loadPDFFonts() {
+  if (_fontCache) return _fontCache
+  const [regRes, boldRes] = await Promise.all([
+    fetch('/fonts/NotoSansTamil-Regular.ttf'),
+    fetch('/fonts/NotoSansTamil-Bold.ttf'),
+  ])
+  const [regBuf, boldBuf] = await Promise.all([regRes.arrayBuffer(), boldRes.arrayBuffer()])
+  _fontCache = { regular: arrayBufferToBase64(regBuf), bold: arrayBufferToBase64(boldBuf) }
+  return _fontCache
+}
+
+function setupFont(doc, fonts) {
+  if (!fonts) return
+  doc.addFileToVFS('NotoSansTamil-Regular.ttf', fonts.regular)
+  doc.addFileToVFS('NotoSansTamil-Bold.ttf', fonts.bold)
+  doc.addFont('NotoSansTamil-Regular.ttf', 'Tamil', 'normal')
+  doc.addFont('NotoSansTamil-Bold.ttf', 'Tamil', 'bold')
+  doc.setFont('Tamil', 'normal')
+}
+
 /**
  * Export a place-wise performance PDF.
- *
- * @param {object} opts
- * @param {string}   opts.constituencyName  - e.g. "Vadapalani"
- * @param {string}   opts.date              - ISO date string
- * @param {string|null} opts.postTitle      - title of filtered post, or null for all posts
- * @param {Array}    opts.rows              - pre-computed rows:
- *   [{ place_name, monitor_names, total, wa, fb, ig, contentCount }]
- *   wa/fb/ig are cumulative done counts across selected content items.
  */
-export function exportPlacePerformancePDF({ constituencyName, date, postTitle, rows }) {
+export function exportPlacePerformancePDF({ constituencyName, date, postTitle, rows, fonts }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  setupFont(doc, fonts)
+  const F = fonts ? 'Tamil' : F
 
   const pageW = doc.internal.pageSize.getWidth()
 
@@ -494,16 +521,16 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
   doc.rect(0, 0, pageW, 22, 'F')
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(13)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(F, 'bold')
   doc.text('Place Performance Report', 14, 10)
   doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(F, 'normal')
   doc.text(`${constituencyName}  ·  ${date}${postTitle ? `  ·  Post: ${postTitle}` : '  ·  All Posts'}`, 14, 17)
 
   // ── Summary stats ────────────────────────────────────────────────────────
   doc.setTextColor(30, 30, 30)
   doc.setFontSize(8.5)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(F, 'normal')
 
   const totalPlaces = rows.length
   const avgOf = rows.map(r => {
@@ -538,8 +565,8 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
     startY: 33,
     head: [['Place', 'Monitor(s)', 'Agents', 'WA %', 'FB %', 'IG %', 'Avg %']],
     body: tableRows,
-    styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak' },
-    headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    styles: { font: F, fontSize: 8, cellPadding: 2.5, overflow: 'linebreak' },
+    headStyles: { font: F, fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
     columnStyles: {
       0: { cellWidth: 42 },
       1: { cellWidth: 52 },
@@ -588,8 +615,10 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
  * @param {Array}  opts.agentStats    rows from agent_season_stats   (this constituency only)
  * @param {object|null} opts.admin    matching admin profile, or null
  */
-export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admin }) {
+export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admin, fonts }) {
   const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  setupFont(doc, fonts)
+  const F = fonts ? 'Tamil' : F
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
@@ -610,10 +639,10 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
   doc.setFillColor(...hFill)
   doc.rect(0, 0, pageW, 28, 'F')
   doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(F, 'bold')
   doc.setFontSize(16)
   doc.text(constRow.constituency_name.toUpperCase(), 14, 11)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(F, 'normal')
   doc.setFontSize(8.5)
   const adminLine = admin
     ? `Admin: ${admin.full_name}${admin.phone ? '   ·   ' + admin.phone : ''}`
@@ -630,10 +659,10 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
   doc.setFillColor(0, 0, 0)
   doc.roundedRect(pageW - 46, 5, 32, 18, 2, 2, 'F')
   doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(F, 'bold')
   doc.setFontSize(16)
   doc.text(`${pct}%`, pageW - 30, 16.5, { align: 'center' })
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(F, 'normal')
   doc.setFontSize(6)
   doc.text('OVERALL', pageW - 30, 21.5, { align: 'center' })
 
@@ -643,7 +672,7 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
   const sortedMons = [...monitorStats].sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
   if (sortedMons.length > 0) {
     doc.setFontSize(8.5)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont(F, 'bold')
     doc.setTextColor(30, 41, 59)
     doc.text('MONITORS', 14, currentY + 5)
     currentY += 8
@@ -665,8 +694,8 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
       startY: currentY,
       head: [['Monitor Name', 'Phone', 'Agents', 'WA %', 'FB %', 'IG %', 'Overall %']],
       body: monRows,
-      styles: { fontSize: 8, cellPadding: 2.2 },
-      headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+      styles: { font: F, fontSize: 8, cellPadding: 2.2 },
+      headStyles: { font: F, fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
       columnStyles: {
         0: { cellWidth: 55 },
         1: { cellWidth: 30 },
@@ -693,7 +722,7 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
   if (agentStats.length > 0) {
     if (currentY > 230) { doc.addPage(); currentY = 15 }
     doc.setFontSize(8.5)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont(F, 'bold')
     doc.setTextColor(30, 41, 59)
     doc.text('DIGITAL AGENTS', 14, currentY + 5)
     currentY += 8
@@ -723,8 +752,8 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
       startY: currentY,
       head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total']],
       body: agentRows,
-      styles: { fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
-      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+      styles: { font: F, fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
+      headStyles: { font: F, fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
       columnStyles: {
         0: { cellWidth: 12, halign: 'center' },
         1: { cellWidth: 44 },
@@ -777,8 +806,10 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
  * @param {Array} opts.agentStats    rows from agent_season_stats (paginated, all rows)
  * @param {Array} opts.admins        [{ id, full_name, phone, constituency_id }]
  */
-export function exportManagementReportPDF({ constStats, monitorStats, agentStats, admins }) {
+export function exportManagementReportPDF({ constStats, monitorStats, agentStats, admins, fonts }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  setupFont(doc, fonts)
+  const F = fonts ? 'Tamil' : F
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
@@ -812,12 +843,12 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
   doc.setFillColor(30, 41, 59)
   doc.roundedRect(14, 18, pageW - 28, 58, 3, 3, 'F')
   doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(F, 'bold')
   doc.setFontSize(26)
   doc.text('CAMPAIGN', pageW / 2, 38, { align: 'center' })
   doc.setFontSize(13)
   doc.setTextColor(148, 163, 184)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(F, 'normal')
   doc.text('DIGITAL TEAM PERFORMANCE REPORT', pageW / 2, 50, { align: 'center' })
   doc.setFontSize(9)
   doc.text('Management Summary  ·  Recruitment Season Review', pageW / 2, 60, { align: 'center' })
@@ -838,10 +869,10 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     doc.setFillColor(...fill)
     doc.roundedRect(x, 90, cardW, 30, 2, 2, 'F')
     doc.setTextColor(255, 255, 255)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont(F, 'bold')
     doc.setFontSize(20)
     doc.text(String(value), x + cardW / 2, 106, { align: 'center' })
-    doc.setFont('helvetica', 'normal')
+    doc.setFont(F, 'normal')
     doc.setFontSize(7.5)
     doc.setTextColor(220, 220, 220)
     doc.text(label, x + cardW / 2, 115, { align: 'center' })
@@ -862,7 +893,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
   doc.setFillColor(30, 41, 59)
   doc.roundedRect(14, 175, pageW - 28, 8, 1, 1, 'F')
   doc.setTextColor(148, 163, 184)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(F, 'bold')
   doc.setFontSize(7)
   doc.text('TOP PERFORMING CONSTITUENCIES', pageW / 2, 180.5, { align: 'center' })
   const top5 = rankedConsts.slice(0, 5)
@@ -873,10 +904,10 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     doc.setFillColor(pct >= 80 ? 22 : pct >= 50 ? 161 : 100, pct >= 80 ? 163 : pct >= 50 ? 98 : 100, pct >= 80 ? 74 : pct >= 50 ? 7 : 100)
     doc.roundedRect(x, 185, bw - 2, 20, 1, 1, 'F')
     doc.setTextColor(255, 255, 255)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont(F, 'bold')
     doc.setFontSize(11)
     doc.text(`${pct}%`, x + (bw - 2) / 2, 195, { align: 'center' })
-    doc.setFont('helvetica', 'normal')
+    doc.setFont(F, 'normal')
     doc.setFontSize(6.5)
     doc.setTextColor(220, 220, 220)
     const name = c.constituency_name.length > 14 ? c.constituency_name.slice(0, 13) + '…' : c.constituency_name
@@ -890,10 +921,10 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
   doc.setFillColor(15, 23, 42)
   doc.rect(0, 0, pageW, 18, 'F')
   doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(F, 'bold')
   doc.setFontSize(11)
   doc.text('EXECUTIVE SUMMARY', 14, 8)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(F, 'normal')
   doc.setFontSize(8)
   doc.setTextColor(148, 163, 184)
   doc.text('Constituency Performance Ranking — Full Season', 14, 15)
@@ -916,8 +947,8 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     startY: 22,
     head: [['#', 'Constituency', 'Admin Name', 'Admin Phone', 'Agents', 'Monitors', 'Posts', 'Overall %']],
     body: summaryRows,
-    styles: { fontSize: 8.5, cellPadding: 2.5 },
-    headStyles: { fillColor: [220, 38, 38], textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
+    styles: { font: F, fontSize: 8.5, cellPadding: 2.5 },
+    headStyles: { font: F, fillColor: [220, 38, 38], textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
     columnStyles: {
       0: { cellWidth: 9,  halign: 'center' },
       1: { cellWidth: 40 },
@@ -958,10 +989,10 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     doc.setFillColor(...hFill)
     doc.rect(0, 0, pageW, 24, 'F')
     doc.setTextColor(255, 255, 255)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont(F, 'bold')
     doc.setFontSize(14)
     doc.text(c.constituency_name.toUpperCase(), 14, 10)
-    doc.setFont('helvetica', 'normal')
+    doc.setFont(F, 'normal')
     doc.setFontSize(8)
     const adminLine = admin
       ? `Admin: ${admin.full_name}${admin.phone ? '   ·   ' + admin.phone : ''}`
@@ -972,10 +1003,10 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     doc.setFillColor(0, 0, 0)
     doc.roundedRect(pageW - 46, 4, 32, 16, 2, 2, 'F')
     doc.setTextColor(255, 255, 255)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont(F, 'bold')
     doc.setFontSize(14)
     doc.text(`${pct}%`, pageW - 30, 14.5, { align: 'center' })
-    doc.setFont('helvetica', 'normal')
+    doc.setFont(F, 'normal')
     doc.setFontSize(6)
     doc.text('OVERALL', pageW - 30, 19.5, { align: 'center' })
 
@@ -984,7 +1015,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     // ── Monitors ──────────────────────────────────────────────────────
     if (constMons.length > 0) {
       doc.setFontSize(8.5)
-      doc.setFont('helvetica', 'bold')
+      doc.setFont(F, 'bold')
       doc.setTextColor(30, 41, 59)
       doc.text('MONITORS', 14, currentY + 5)
       currentY += 8
@@ -1006,8 +1037,8 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
         startY: currentY,
         head: [['Monitor Name', 'Phone', 'Agents', 'WA %', 'FB %', 'IG %', 'Overall %']],
         body: monRows,
-        styles: { fontSize: 8, cellPadding: 2.2 },
-        headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+        styles: { font: F, fontSize: 8, cellPadding: 2.2 },
+        headStyles: { font: F, fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
         columnStyles: {
           0: { cellWidth: 55 },
           1: { cellWidth: 30 },
@@ -1034,7 +1065,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
     if (constAgents.length > 0) {
       if (currentY > 220) { doc.addPage(); currentY = 15 }
       doc.setFontSize(8.5)
-      doc.setFont('helvetica', 'bold')
+      doc.setFont(F, 'bold')
       doc.setTextColor(30, 41, 59)
       doc.text('DIGITAL AGENTS', 14, currentY + 5)
       currentY += 8
@@ -1064,8 +1095,8 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
         startY: currentY,
         head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total']],
         body: agentRows,
-        styles: { fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
-        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+        styles: { font: F, fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
+        headStyles: { font: F, fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
         columnStyles: {
           0: { cellWidth: 12, halign: 'center' },
           1: { cellWidth: 44 },
