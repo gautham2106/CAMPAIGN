@@ -488,13 +488,19 @@ function arrayBufferToBase64(buffer) {
 
 export async function loadPDFFonts() {
   if (_fontCache) return _fontCache
-  const [regRes, boldRes] = await Promise.all([
-    fetch('/fonts/NotoSansTamil-Regular.ttf'),
-    fetch('/fonts/NotoSansTamil-Bold.ttf'),
-  ])
-  const [regBuf, boldBuf] = await Promise.all([regRes.arrayBuffer(), boldRes.arrayBuffer()])
-  _fontCache = { regular: arrayBufferToBase64(regBuf), bold: arrayBufferToBase64(boldBuf) }
-  return _fontCache
+  try {
+    const [regRes, boldRes] = await Promise.all([
+      fetch('/fonts/NotoSansTamil-Regular.ttf'),
+      fetch('/fonts/NotoSansTamil-Bold.ttf'),
+    ])
+    if (!regRes.ok || !boldRes.ok) return null
+    const [regBuf, boldBuf] = await Promise.all([regRes.arrayBuffer(), boldRes.arrayBuffer()])
+    _fontCache = { regular: arrayBufferToBase64(regBuf), bold: arrayBufferToBase64(boldBuf) }
+    return _fontCache
+  } catch (e) {
+    console.warn('PDF font load failed, using built-in font:', e)
+    return null
+  }
 }
 
 function setupFont(doc, fonts) {
