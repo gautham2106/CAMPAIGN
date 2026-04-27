@@ -779,7 +779,7 @@ export default function SuperAdminPage() {
       const client = supabaseAdmin ?? supabase
       const [fonts, constRes, monRes, agentRows, adminRes] = await Promise.all([
         loadPDFFonts(),
-        client.from('constituency_season_stats').select('*').eq('constituency_id', constId).single(),
+        client.from('constituency_season_stats').select('*').eq('constituency_id', constId).maybeSingle(),
         client.from('monitor_season_stats').select('*').eq('constituency_id', constId),
         paginatedFetch(() => client.from('agent_season_stats').select('*').eq('constituency_id', constId).order('booth_number')),
         client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').eq('constituency_id', constId).maybeSingle(),
@@ -787,8 +787,15 @@ export default function SuperAdminPage() {
       if (constRes.error) throw constRes.error
       if (monRes.error) throw monRes.error
       if (adminRes.error) throw adminRes.error
+      // Fall back to basic info if season stats view isn't set up yet
+      const constBasic = constituencies.find(c => c.id === constId)
+      const constRow = constRes.data ?? {
+        constituency_id: constId,
+        constituency_name: constBasic?.name ?? 'Constituency',
+        agent_count: 0, monitor_count: 0, total_posts: 0, overall_pct: 0,
+      }
       exportConstituencyPDF({
-        constRow:     constRes.data,
+        constRow,
         monitorStats: monRes.data ?? [],
         agentStats:   agentRows,
         admin:        adminRes.data ?? null,

@@ -502,8 +502,8 @@ function setupFont(doc, fonts) {
   try {
     doc.addFileToVFS('NotoSansTamil-Regular.ttf', fonts.regular)
     doc.addFileToVFS('NotoSansTamil-Bold.ttf', fonts.bold)
-    doc.addFont('NotoSansTamil-Regular.ttf', 'Tamil', 'normal', 'Identity-H')
-    doc.addFont('NotoSansTamil-Bold.ttf', 'Tamil', 'bold', 'Identity-H')
+    doc.addFont('NotoSansTamil-Regular.ttf', 'Tamil', 'normal')
+    doc.addFont('NotoSansTamil-Bold.ttf', 'Tamil', 'bold')
     doc.setFont('Tamil', 'normal')
     return true
   } catch (e) {
