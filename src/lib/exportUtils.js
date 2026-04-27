@@ -498,12 +498,18 @@ export async function loadPDFFonts() {
 }
 
 function setupFont(doc, fonts) {
-  if (!fonts) return
-  doc.addFileToVFS('NotoSansTamil-Regular.ttf', fonts.regular)
-  doc.addFileToVFS('NotoSansTamil-Bold.ttf', fonts.bold)
-  doc.addFont('NotoSansTamil-Regular.ttf', 'Tamil', 'normal')
-  doc.addFont('NotoSansTamil-Bold.ttf', 'Tamil', 'bold')
-  doc.setFont('Tamil', 'normal')
+  if (!fonts) return false
+  try {
+    doc.addFileToVFS('NotoSansTamil-Regular.ttf', fonts.regular)
+    doc.addFileToVFS('NotoSansTamil-Bold.ttf', fonts.bold)
+    doc.addFont('NotoSansTamil-Regular.ttf', 'Tamil', 'normal', 'Identity-H')
+    doc.addFont('NotoSansTamil-Bold.ttf', 'Tamil', 'bold', 'Identity-H')
+    doc.setFont('Tamil', 'normal')
+    return true
+  } catch (e) {
+    console.warn('Tamil font registration failed, using helvetica:', e)
+    return false
+  }
 }
 
 /**
@@ -511,8 +517,7 @@ function setupFont(doc, fonts) {
  */
 export function exportPlacePerformancePDF({ constituencyName, date, postTitle, rows, fonts }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  setupFont(doc, fonts)
-  const F = fonts ? 'Tamil' : 'helvetica'
+  const F = setupFont(doc, fonts) ? 'Tamil' : 'helvetica'
 
   const pageW = doc.internal.pageSize.getWidth()
 
@@ -617,8 +622,7 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
  */
 export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admin, fonts }) {
   const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  setupFont(doc, fonts)
-  const F = fonts ? 'Tamil' : 'helvetica'
+  const F = setupFont(doc, fonts) ? 'Tamil' : 'helvetica'
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
@@ -808,8 +812,7 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
  */
 export function exportManagementReportPDF({ constStats, monitorStats, agentStats, admins, fonts }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  setupFont(doc, fonts)
-  const F = fonts ? 'Tamil' : 'helvetica'
+  const F = setupFont(doc, fonts) ? 'Tamil' : 'helvetica'
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
