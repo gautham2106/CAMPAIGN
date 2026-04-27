@@ -645,7 +645,7 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
       if (comp.wa && comp.fb && comp.ig) fullyDone++
     }
     const total = applicable.length
-    return { fullyDone, total, overallPct: total > 0 ? Math.round((wa + fb + ig) / (total * 3) * 100) : 0 }
+    return { wa, fb, ig, total }
   }
 
   function pctColor(val) {
@@ -905,37 +905,46 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
       currentY += 8
 
       const agentRows = constAgents.map(a => {
-        const st = agentStats(a.id, a.constituency_id)
+        const st  = agentStats(a.id, a.constituency_id)
         const mon = monitors.find(m => m.id === a.assigned_monitor_id)
         return [
           String(a.booth_number ?? '—'),
           a.name,
           a.phone ?? '—',
           mon?.full_name ?? '—',
-          `${st.fullyDone} / ${st.total}`,
-          `${st.overallPct}%`,
+          String(st.wa),
+          String(st.fb),
+          String(st.ig),
+          String(st.total),
         ]
-      }).sort((x, y) => parseInt(y[5]) - parseInt(x[5]))
+      }).sort((x, y) => (parseInt(y[4]) + parseInt(y[5]) + parseInt(y[6])) - (parseInt(x[4]) + parseInt(x[5]) + parseInt(x[6])))
 
       autoTable(doc, {
         startY: currentY,
-        head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'Posts Done', 'Overall %']],
+        head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total']],
         body: agentRows,
         styles: { fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
         headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
         columnStyles: {
-          0: { cellWidth: 14, halign: 'center' },
-          1: { cellWidth: 50 },
+          0: { cellWidth: 12, halign: 'center' },
+          1: { cellWidth: 44 },
           2: { cellWidth: 28 },
-          3: { cellWidth: 40 },
-          4: { cellWidth: 24, halign: 'center' },
-          5: { cellWidth: 22, halign: 'center' },
+          3: { cellWidth: 34 },
+          4: { cellWidth: 16, halign: 'center' },
+          5: { cellWidth: 16, halign: 'center' },
+          6: { cellWidth: 16, halign: 'center' },
+          7: { cellWidth: 16, halign: 'center' },
         },
         didParseCell(data) {
-          if (data.section === 'body' && data.column.index === 5) {
-            const val = parseInt(data.cell.raw)
-            data.cell.styles.textColor = pctColor(val)
-            if (val > 0) data.cell.styles.fontStyle = 'bold'
+          // Colour WA/FB/IG cells: green if equal to total, yellow if partial, red if 0
+          if (data.section === 'body' && [4, 5, 6].includes(data.column.index)) {
+            const val   = parseInt(data.cell.raw) || 0
+            const total = parseInt(data.row.cells[7]?.raw ?? data.row.cells[7]?.text?.[0] ?? '0') || 0
+            if (total === 0) { data.cell.styles.textColor = [156, 163, 175]; return }
+            if (val === total)      { data.cell.styles.textColor = [22, 163, 74];  data.cell.styles.fontStyle = 'bold' }
+            else if (val > total / 2) { data.cell.styles.textColor = [161, 98, 7];  data.cell.styles.fontStyle = 'bold' }
+            else if (val > 0)       { data.cell.styles.textColor = [220, 38, 38]; data.cell.styles.fontStyle = 'bold' }
+            else                    { data.cell.styles.textColor = [156, 163, 175] }
           }
         },
         alternateRowStyles: { fillColor: [248, 249, 250] },
