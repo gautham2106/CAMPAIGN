@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF, exportConstituencyPDF } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -243,6 +243,7 @@ export default function SuperAdminPage() {
   const [exportingPlace, setExportingPlace]   = useState(false)
   const [exportingPlacePerf, setExportingPlacePerf] = useState(false)
   const [exportingMgmt, setExportingMgmt] = useState(false)
+  const [exportingSeparate, setExportingSeparate] = useState(false)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -732,6 +733,63 @@ export default function SuperAdminPage() {
       setError(e.message)
     } finally {
       setExportingMgmt(false)
+    }
+  }
+
+  async function handleSeparatePDFs() {
+    setExportingSeparate(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+
+      async function fetchAllRows(createQuery) {
+        const PAGE = 1000
+        const all = []
+        let page = 0
+        while (true) {
+          const { data, error } = await createQuery().range(page * PAGE, (page + 1) * PAGE - 1)
+          if (error) throw error
+          if (!data?.length) break
+          all.push(...data)
+          if (data.length < PAGE) break
+          page++
+        }
+        return all
+      }
+
+      const [constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+        client.from('constituency_season_stats').select('*'),
+        client.from('monitor_season_stats').select('*'),
+        fetchAllRows(() => client.from('agent_season_stats').select('*').order('booth_number')),
+        client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
+      ])
+
+      if (constStats.error) throw constStats.error
+      if (monitorStats.error) throw monitorStats.error
+      if (adminsRes.error) throw adminsRes.error
+
+      const allConsts    = constStats.data ?? []
+      const allMonitors  = monitorStats.data ?? []
+      const allAgents    = agentStatsRows
+      const allAdmins    = adminsRes.data ?? []
+
+      const adminMap = {}
+      for (const a of allAdmins) adminMap[a.constituency_id] = a
+
+      // Download one PDF per constituency, 400 ms apart so the browser doesn't block them
+      for (let i = 0; i < allConsts.length; i++) {
+        const c = allConsts[i]
+        await new Promise(resolve => setTimeout(resolve, i === 0 ? 0 : 400))
+        exportConstituencyPDF({
+          constRow:     c,
+          monitorStats: allMonitors.filter(m => m.constituency_id === c.constituency_id),
+          agentStats:   allAgents.filter(a => a.constituency_id === c.constituency_id),
+          admin:        adminMap[c.constituency_id] ?? null,
+        })
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setExportingSeparate(false)
     }
   }
 
@@ -1372,13 +1430,22 @@ export default function SuperAdminPage() {
                 Includes executive summary, constituency rankings, monitor percentages, and agent post counts.
               </p>
             </div>
-            <button
-              onClick={handleManagementReport}
-              disabled={exportingMgmt}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors"
-            >
-              {exportingMgmt ? '⏳ Generating PDF…' : '⬇ Download Management Report PDF'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleManagementReport}
+                disabled={exportingMgmt || exportingSeparate}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors"
+              >
+                {exportingMgmt ? '⏳ Generating PDF…' : '⬇ Combined Report PDF'}
+              </button>
+              <button
+                onClick={handleSeparatePDFs}
+                disabled={exportingMgmt || exportingSeparate}
+                className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-500 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-colors"
+              >
+                {exportingSeparate ? '⏳ Downloading…' : '⬇ Separate PDF per Constituency'}
+              </button>
+            </div>
           </div>
 
           {/* Master Excel Export */}

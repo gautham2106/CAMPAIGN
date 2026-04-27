@@ -580,6 +580,191 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
 }
 
 /**
+ * Generate and save one PDF for a single constituency.
+ * Called in a loop to produce separate per-constituency files.
+ *
+ * @param {object} opts.constRow      one row from constituency_season_stats
+ * @param {Array}  opts.monitorStats  rows from monitor_season_stats (this constituency only)
+ * @param {Array}  opts.agentStats    rows from agent_season_stats   (this constituency only)
+ * @param {object|null} opts.admin    matching admin profile, or null
+ */
+export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admin }) {
+  const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+
+  const pct = constRow.overall_pct ?? 0
+
+  const monNameMap = {}
+  for (const m of monitorStats) monNameMap[m.monitor_id] = m.monitor_name
+
+  function pctColor(val) {
+    if (val >= 80) return [22, 163, 74]
+    if (val >= 50) return [161, 98, 7]
+    if (val > 0)   return [220, 38, 38]
+    return [156, 163, 175]
+  }
+
+  // ── Constituency header bar ──────────────────────────────────────────
+  const hFill = pct >= 80 ? [22, 163, 74] : pct >= 50 ? [161, 98, 7] : pct > 0 ? [220, 38, 38] : [71, 85, 105]
+  doc.setFillColor(...hFill)
+  doc.rect(0, 0, pageW, 28, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  doc.text(constRow.constituency_name.toUpperCase(), 14, 11)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  const adminLine = admin
+    ? `Admin: ${admin.full_name}${admin.phone ? '   ·   ' + admin.phone : ''}`
+    : 'No admin assigned'
+  doc.text(adminLine, 14, 19)
+  doc.setFontSize(7.5)
+  doc.setTextColor(220, 255, 220)
+  doc.text(
+    `Agents: ${constRow.agent_count ?? 0}   Monitors: ${constRow.monitor_count ?? 0}   Posts: ${constRow.total_posts ?? 0}`,
+    14, 25.5
+  )
+
+  // Overall % badge
+  doc.setFillColor(0, 0, 0)
+  doc.roundedRect(pageW - 46, 5, 32, 18, 2, 2, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  doc.text(`${pct}%`, pageW - 30, 16.5, { align: 'center' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(6)
+  doc.text('OVERALL', pageW - 30, 21.5, { align: 'center' })
+
+  let currentY = 32
+
+  // ── Monitors ────────────────────────────────────────────────────────
+  const sortedMons = [...monitorStats].sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
+  if (sortedMons.length > 0) {
+    doc.setFontSize(8.5)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 41, 59)
+    doc.text('MONITORS', 14, currentY + 5)
+    currentY += 8
+
+    const monRows = sortedMons.map(m => {
+      const slots = m.total_slots || 1
+      return [
+        m.monitor_name,
+        m.phone ?? '—',
+        String(m.agent_count ?? 0),
+        `${Math.round((m.wa_done ?? 0) / slots * 100)}%`,
+        `${Math.round((m.fb_done ?? 0) / slots * 100)}%`,
+        `${Math.round((m.ig_done ?? 0) / slots * 100)}%`,
+        `${m.overall_pct ?? 0}%`,
+      ]
+    })
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Monitor Name', 'Phone', 'Agents', 'WA %', 'FB %', 'IG %', 'Overall %']],
+      body: monRows,
+      styles: { fontSize: 8, cellPadding: 2.2 },
+      headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 55 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 18, halign: 'center' },
+        3: { cellWidth: 18, halign: 'center' },
+        4: { cellWidth: 18, halign: 'center' },
+        5: { cellWidth: 18, halign: 'center' },
+        6: { cellWidth: 22, halign: 'center' },
+      },
+      didParseCell(data) {
+        if (data.section === 'body' && data.column.index === 6) {
+          const val = parseInt(data.cell.raw)
+          data.cell.styles.textColor = pctColor(val)
+          data.cell.styles.fontStyle = 'bold'
+        }
+      },
+      alternateRowStyles: { fillColor: [248, 249, 250] },
+      margin: { left: 14, right: 14 },
+    })
+    currentY = doc.lastAutoTable.finalY + 8
+  }
+
+  // ── Digital Agents ──────────────────────────────────────────────────
+  if (agentStats.length > 0) {
+    if (currentY > 230) { doc.addPage(); currentY = 15 }
+    doc.setFontSize(8.5)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 41, 59)
+    doc.text('DIGITAL AGENTS', 14, currentY + 5)
+    currentY += 8
+
+    const agentRows = [...agentStats]
+      .sort((a, b) => (a.booth_number ?? 99999) - (b.booth_number ?? 99999))
+      .map(a => [
+        String(a.booth_number ?? '—'),
+        a.agent_name,
+        a.phone ?? '—',
+        monNameMap[a.assigned_monitor_id] ?? '—',
+        String(a.wa_done ?? 0),
+        String(a.fb_done ?? 0),
+        String(a.ig_done ?? 0),
+        String((a.wa_done ?? 0) + (a.fb_done ?? 0) + (a.ig_done ?? 0)),
+        String(a.total_applicable_posts ?? 0),
+      ])
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total', '']],
+      body: agentRows,
+      styles: { fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+      columnStyles: {
+        0: { cellWidth: 12, halign: 'center' },
+        1: { cellWidth: 44 },
+        2: { cellWidth: 28 },
+        3: { cellWidth: 34 },
+        4: { cellWidth: 16, halign: 'center' },
+        5: { cellWidth: 16, halign: 'center' },
+        6: { cellWidth: 16, halign: 'center' },
+        7: { cellWidth: 16, halign: 'center' },
+        8: { cellWidth: 0.1 },
+      },
+      didParseCell(data) {
+        if (data.section === 'head' && data.column.index === 8) {
+          data.cell.styles.fillColor = [15, 23, 42]
+        }
+        if (data.section === 'body' && [4, 5, 6].includes(data.column.index)) {
+          const val   = parseInt(data.cell.raw) || 0
+          const total = parseInt(data.row.cells[8]?.raw ?? data.row.cells[8]?.text?.[0] ?? '0') || 0
+          if (total === 0) { data.cell.styles.textColor = [156, 163, 175]; return }
+          if (val === total)        { data.cell.styles.textColor = [22, 163, 74];  data.cell.styles.fontStyle = 'bold' }
+          else if (val > total / 2) { data.cell.styles.textColor = [161, 98, 7];  data.cell.styles.fontStyle = 'bold' }
+          else if (val > 0)         { data.cell.styles.textColor = [220, 38, 38]; data.cell.styles.fontStyle = 'bold' }
+          else                      { data.cell.styles.textColor = [156, 163, 175] }
+        }
+      },
+      alternateRowStyles: { fillColor: [248, 249, 250] },
+      margin: { left: 14, right: 14 },
+    })
+  }
+
+  // ── Page footers ─────────────────────────────────────────────────────
+  const pageCount = doc.getNumberOfPages()
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i)
+    doc.setFontSize(7)
+    doc.setTextColor(150)
+    doc.text(
+      `Page ${i} of ${pageCount}  ·  ${constRow.constituency_name}  ·  ${new Date().toLocaleString('en-IN')}`,
+      pageW / 2, pageH - 5, { align: 'center' }
+    )
+  }
+
+  const safeName = constRow.constituency_name.replace(/[^a-z0-9]/gi, '_')
+  doc.save(`${safeName}_performance_${new Date().toISOString().slice(0, 10)}.pdf`)
+}
+
+/**
  * Full management report PDF — cover, executive summary, per-constituency detail.
  * Uses pre-aggregated season stats views for correct counts across all agents.
  *
