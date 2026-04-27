@@ -512,7 +512,7 @@ function setupFont(doc, fonts) {
 export function exportPlacePerformancePDF({ constituencyName, date, postTitle, rows, fonts }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   setupFont(doc, fonts)
-  const F = fonts ? 'Tamil' : F
+  const F = fonts ? 'Tamil' : 'helvetica'
 
   const pageW = doc.internal.pageSize.getWidth()
 
@@ -618,7 +618,7 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
 export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admin, fonts }) {
   const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   setupFont(doc, fonts)
-  const F = fonts ? 'Tamil' : F
+  const F = fonts ? 'Tamil' : 'helvetica'
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
@@ -809,7 +809,7 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
 export function exportManagementReportPDF({ constStats, monitorStats, agentStats, admins, fonts }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   setupFont(doc, fonts)
-  const F = fonts ? 'Tamil' : F
+  const F = fonts ? 'Tamil' : 'helvetica'
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
