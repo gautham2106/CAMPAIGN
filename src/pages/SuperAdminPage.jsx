@@ -691,7 +691,7 @@ export default function SuperAdminPage() {
     })
   }
 
-  async function fetchAllRows(client, createQuery) {
+  async function paginatedFetch(createQuery) {
     const PAGE = 1000
     const all = []
     let page = 0
@@ -714,7 +714,7 @@ export default function SuperAdminPage() {
         loadPDFFonts(),
         client.from('constituency_season_stats').select('*'),
         client.from('monitor_season_stats').select('*'),
-        fetchAllRows(client, () => client.from('agent_season_stats').select('*').order('booth_number')),
+        paginatedFetch(() => client.from('agent_season_stats').select('*').order('booth_number')),
         client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
       ])
       if (constStats.error) throw constStats.error
@@ -742,7 +742,7 @@ export default function SuperAdminPage() {
         loadPDFFonts(),
         client.from('constituency_season_stats').select('*'),
         client.from('monitor_season_stats').select('*'),
-        fetchAllRows(client, () => client.from('agent_season_stats').select('*').order('booth_number')),
+        paginatedFetch(() => client.from('agent_season_stats').select('*').order('booth_number')),
         client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
       ])
       if (constStats.error) throw constStats.error
@@ -781,7 +781,7 @@ export default function SuperAdminPage() {
         loadPDFFonts(),
         client.from('constituency_season_stats').select('*').eq('constituency_id', constId).single(),
         client.from('monitor_season_stats').select('*').eq('constituency_id', constId),
-        fetchAllRows(client, () => client.from('agent_season_stats').select('*').eq('constituency_id', constId).order('booth_number')),
+        paginatedFetch(() => client.from('agent_season_stats').select('*').eq('constituency_id', constId).order('booth_number')),
         client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').eq('constituency_id', constId).maybeSingle(),
       ])
       if (constRes.error) throw constRes.error
