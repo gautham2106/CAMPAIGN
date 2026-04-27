@@ -860,7 +860,8 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
           String(a.wa_done ?? 0),
           String(a.fb_done ?? 0),
           String(a.ig_done ?? 0),
-          String(a.total_applicable_posts ?? 0),
+          String((a.wa_done ?? 0) + (a.fb_done ?? 0) + (a.ig_done ?? 0)),
+          String(a.total_applicable_posts ?? 0),  // col 8: reference for colour, not displayed
         ])
         .sort((x, y) =>
           (parseInt(y[4]) + parseInt(y[5]) + parseInt(y[6])) -
@@ -869,7 +870,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
 
       autoTable(doc, {
         startY: currentY,
-        head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total']],
+        head: [['Booth', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total', '']],
         body: agentRows,
         styles: { fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak' },
         headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
@@ -882,11 +883,15 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
           5: { cellWidth: 16, halign: 'center' },
           6: { cellWidth: 16, halign: 'center' },
           7: { cellWidth: 16, halign: 'center' },
+          8: { cellWidth: 0.1 },  // hidden reference column
         },
         didParseCell(data) {
+          if (data.section === 'head' && data.column.index === 8) {
+            data.cell.styles.fillColor = [15, 23, 42]  // hide header cell
+          }
           if (data.section === 'body' && [4, 5, 6].includes(data.column.index)) {
             const val   = parseInt(data.cell.raw) || 0
-            const total = parseInt(data.row.cells[7]?.raw ?? data.row.cells[7]?.text?.[0] ?? '0') || 0
+            const total = parseInt(data.row.cells[8]?.raw ?? data.row.cells[8]?.text?.[0] ?? '0') || 0
             if (total === 0) { data.cell.styles.textColor = [156, 163, 175]; return }
             if (val === total)        { data.cell.styles.textColor = [22, 163, 74];  data.cell.styles.fontStyle = 'bold' }
             else if (val > total / 2) { data.cell.styles.textColor = [161, 98, 7];  data.cell.styles.fontStyle = 'bold' }
