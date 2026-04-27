@@ -721,3 +721,104 @@ GRANT SELECT ON constituency_field_ops_stats TO authenticated;
 --   DROP VIEW IF EXISTS constituency_field_ops_stats;
 -- Then re-run the CREATE OR REPLACE VIEW blocks above.
 -- ============================================================
+
+-- ============================================================
+-- MANAGEMENT REPORT VIEWS (season-wide, all-time aggregates)
+-- Run the block below in Supabase SQL Editor.
+-- Safe to re-run.  Depends on: agent_compliance (already exists).
+-- ============================================================
+
+DROP VIEW IF EXISTS constituency_season_stats;
+DROP VIEW IF EXISTS monitor_season_stats;
+DROP VIEW IF EXISTS agent_season_stats;
+
+-- ── 1. Agent season stats ──────────────────────────────────────────────────
+-- One row per agent. Counts WA / FB / IG completions across the full season.
+CREATE OR REPLACE VIEW agent_season_stats AS
+SELECT
+  da.id                                                                 AS agent_id,
+  da.name                                                               AS agent_name,
+  da.phone,
+  da.booth_number,
+  da.constituency_id,
+  da.assigned_monitor_id,
+  COUNT(DISTINCT dc.id)                                                 AS total_applicable_posts,
+  COUNT(DISTINCT CASE WHEN ac.wa       = true THEN ac.content_id END)  AS wa_done,
+  COUNT(DISTINCT CASE WHEN ac.fb       = true THEN ac.content_id END)  AS fb_done,
+  COUNT(DISTINCT CASE WHEN ac.ig       = true THEN ac.content_id END)  AS ig_done,
+  COUNT(DISTINCT CASE WHEN ac.all_done = true THEN ac.content_id END)  AS all_done
+FROM digital_agents da
+JOIN daily_content dc
+  ON (dc.target_constituencies IS NULL
+      OR da.constituency_id = ANY(dc.target_constituencies))
+LEFT JOIN agent_compliance ac
+  ON ac.agent_id = da.id AND ac.content_id = dc.id
+GROUP BY
+  da.id, da.name, da.phone, da.booth_number,
+  da.constituency_id, da.assigned_monitor_id;
+
+GRANT SELECT ON agent_season_stats TO authenticated;
+
+
+-- ── 2. Monitor season stats ────────────────────────────────────────────────
+-- One row per monitor. Sums agent_season_stats for all assigned agents.
+-- Overall % is normalised so monitors with few or many agents compare fairly.
+CREATE OR REPLACE VIEW monitor_season_stats AS
+SELECT
+  p.id                                                  AS monitor_id,
+  p.full_name                                           AS monitor_name,
+  p.phone,
+  p.constituency_id,
+  COUNT(DISTINCT ass.agent_id)                          AS agent_count,
+  COALESCE(SUM(ass.wa_done), 0)                         AS wa_done,
+  COALESCE(SUM(ass.fb_done), 0)                         AS fb_done,
+  COALESCE(SUM(ass.ig_done), 0)                         AS ig_done,
+  COALESCE(SUM(ass.total_applicable_posts), 0)          AS total_slots,
+  CASE
+    WHEN COALESCE(SUM(ass.total_applicable_posts), 0) = 0 THEN 0
+    ELSE ROUND(
+      (COALESCE(SUM(ass.wa_done), 0) +
+       COALESCE(SUM(ass.fb_done), 0) +
+       COALESCE(SUM(ass.ig_done), 0))::numeric
+      / (SUM(ass.total_applicable_posts) * 3) * 100
+    )
+  END                                                   AS overall_pct
+FROM profiles p
+LEFT JOIN agent_season_stats ass ON ass.assigned_monitor_id = p.id
+WHERE p.role = 'monitor'
+GROUP BY p.id, p.full_name, p.phone, p.constituency_id;
+
+GRANT SELECT ON monitor_season_stats TO authenticated;
+
+
+-- ── 3. Constituency season stats ───────────────────────────────────────────
+-- One row per constituency. All-time totals derived from agent_season_stats.
+CREATE OR REPLACE VIEW constituency_season_stats AS
+SELECT
+  c.id                                                  AS constituency_id,
+  c.name                                                AS constituency_name,
+  COUNT(DISTINCT da.id)                                 AS agent_count,
+  COUNT(DISTINCT pm.id)                                 AS monitor_count,
+  (SELECT COUNT(*) FROM daily_content dc2
+   WHERE dc2.target_constituencies IS NULL
+      OR c.id = ANY(dc2.target_constituencies))         AS total_posts,
+  COALESCE(SUM(ass.wa_done), 0)                         AS wa_done,
+  COALESCE(SUM(ass.fb_done), 0)                         AS fb_done,
+  COALESCE(SUM(ass.ig_done), 0)                         AS ig_done,
+  COALESCE(SUM(ass.total_applicable_posts), 0)          AS total_slots,
+  CASE
+    WHEN COALESCE(SUM(ass.total_applicable_posts), 0) = 0 THEN 0
+    ELSE ROUND(
+      (COALESCE(SUM(ass.wa_done), 0) +
+       COALESCE(SUM(ass.fb_done), 0) +
+       COALESCE(SUM(ass.ig_done), 0))::numeric
+      / (SUM(ass.total_applicable_posts) * 3) * 100
+    )
+  END                                                   AS overall_pct
+FROM constituencies c
+LEFT JOIN digital_agents da    ON da.constituency_id = c.id
+LEFT JOIN profiles pm          ON pm.constituency_id = c.id AND pm.role = 'monitor'
+LEFT JOIN agent_season_stats ass ON ass.agent_id = da.id
+GROUP BY c.id, c.name;
+
+GRANT SELECT ON constituency_season_stats TO authenticated;

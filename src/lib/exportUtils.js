@@ -581,72 +581,25 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
 
 /**
  * Full management report PDF — cover, executive summary, per-constituency detail.
+ * Uses pre-aggregated season stats views for correct counts across all agents.
+ *
  * @param {object} opts
- * @param {Array} opts.constituencies   [{ id, name }]
- * @param {Array} opts.constStatsRows   all rows from constituency_content_stats (no date filter)
- * @param {Array} opts.monStatsRows     all rows from monitor_content_stats (no date filter)
- * @param {Array} opts.profiles         [{ id, full_name, phone, role, constituency_id }]
- * @param {Array} opts.agents           [{ id, name, phone, booth_number, constituency_id, assigned_monitor_id }]
- * @param {Array} opts.contents         [{ id, content_date, target_constituencies }]
- * @param {Array} opts.complianceLogs   [{ agent_id, content_id, platform }] — is_checked=true only
+ * @param {Array} opts.constStats    rows from constituency_season_stats
+ * @param {Array} opts.monitorStats  rows from monitor_season_stats
+ * @param {Array} opts.agentStats    rows from agent_season_stats (paginated, all rows)
+ * @param {Array} opts.admins        [{ id, full_name, phone, constituency_id }]
  */
-export function exportManagementReportPDF({ constituencies, constStatsRows, monStatsRows, profiles, agents, contents, complianceLogs }) {
+export function exportManagementReportPDF({ constStats, monitorStats, agentStats, admins }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
 
-  const admins   = profiles.filter(p => p.role === 'constituency_admin')
-  const monitors = profiles.filter(p => p.role === 'monitor')
+  // Quick lookups
+  const adminMap = {}
+  for (const a of admins) adminMap[a.constituency_id] = a
 
-  // ── Aggregate constituency stats across all dates ──────────────────────
-  const cSum = {}  // constituency_id → { wa, fb, ig, slots }
-  for (const r of constStatsRows) {
-    if (!cSum[r.constituency_id]) cSum[r.constituency_id] = { wa: 0, fb: 0, ig: 0, slots: 0 }
-    cSum[r.constituency_id].wa    += r.wa_done
-    cSum[r.constituency_id].fb    += r.fb_done
-    cSum[r.constituency_id].ig    += r.ig_done
-    cSum[r.constituency_id].slots += r.total_agents
-  }
-
-  // ── Aggregate monitor stats across all dates ───────────────────────────
-  const mSum = {}  // monitor_id → { wa, fb, ig, slots }
-  for (const r of monStatsRows) {
-    if (!mSum[r.monitor_id]) mSum[r.monitor_id] = { wa: 0, fb: 0, ig: 0, slots: 0 }
-    mSum[r.monitor_id].wa    += r.wa_done
-    mSum[r.monitor_id].fb    += r.fb_done
-    mSum[r.monitor_id].ig    += r.ig_done
-    mSum[r.monitor_id].slots += r.total_agents
-  }
-
-  const pctOf = s => s && s.slots > 0 ? Math.round((s.wa + s.fb + s.ig) / (s.slots * 3) * 100) : 0
-
-  // ── Per-agent compliance from raw logs ────────────────────────────────
-  const acMap = {} // agent_id → content_id → { wa, fb, ig }
-  for (const log of complianceLogs) {
-    if (!acMap[log.agent_id]) acMap[log.agent_id] = {}
-    if (!acMap[log.agent_id][log.content_id]) acMap[log.agent_id][log.content_id] = { wa: false, fb: false, ig: false }
-    if (log.platform === 'whatsapp')  acMap[log.agent_id][log.content_id].wa = true
-    else if (log.platform === 'facebook')  acMap[log.agent_id][log.content_id].fb = true
-    else if (log.platform === 'instagram') acMap[log.agent_id][log.content_id].ig = true
-  }
-
-  function agentStats(agentId, constId) {
-    const applicable = contents.filter(c =>
-      c.target_constituencies == null ||
-      (Array.isArray(c.target_constituencies) && c.target_constituencies.includes(constId))
-    )
-    const ac = acMap[agentId] ?? {}
-    let wa = 0, fb = 0, ig = 0, fullyDone = 0
-    for (const c of applicable) {
-      const comp = ac[c.id] ?? {}
-      if (comp.wa) wa++
-      if (comp.fb) fb++
-      if (comp.ig) ig++
-      if (comp.wa && comp.fb && comp.ig) fullyDone++
-    }
-    const total = applicable.length
-    return { wa, fb, ig, total }
-  }
+  const monNameMap = {}
+  for (const m of monitorStats) monNameMap[m.monitor_id] = m.monitor_name
 
   function pctColor(val) {
     if (val >= 80) return [22, 163, 74]
@@ -655,7 +608,8 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
     return [156, 163, 175]
   }
 
-  const rankedConsts = [...constituencies].sort((a, b) => pctOf(cSum[b.id]) - pctOf(cSum[a.id]))
+  const rankedConsts = [...constStats].sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
+  const maxPosts = Math.max(0, ...constStats.map(c => c.total_posts ?? 0))
 
   // ══════════════════════════════════════════════════════════════════════
   // COVER PAGE
@@ -685,10 +639,10 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
 
   // Stats cards
   const statItems = [
-    { label: 'Constituencies', value: constituencies.length, fill: [99, 102, 241] },
-    { label: 'Monitors',       value: monitors.length,       fill: [59, 130, 246] },
-    { label: 'Digital Agents', value: agents.length,         fill: [16, 185, 129] },
-    { label: 'Content Posts',  value: contents.length,       fill: [245, 158, 11] },
+    { label: 'Constituencies', value: constStats.length,    fill: [99, 102, 241] },
+    { label: 'Monitors',       value: monitorStats.length,  fill: [59, 130, 246] },
+    { label: 'Digital Agents', value: agentStats.length,    fill: [16, 185, 129] },
+    { label: 'Content Posts',  value: maxPosts,             fill: [245, 158, 11] },
   ]
   const cardW = (pageW - 28 - 9) / 4
   statItems.forEach(({ label, value, fill }, i) => {
@@ -716,7 +670,7 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
   ]
   descLines.forEach((line, i) => doc.text(line, pageW / 2, 142 + i * 7, { align: 'center' }))
 
-  // Constituency mini-ranking on cover
+  // Top 5 constituencies mini-ranking
   doc.setFillColor(30, 41, 59)
   doc.roundedRect(14, 175, pageW - 28, 8, 1, 1, 'F')
   doc.setTextColor(148, 163, 184)
@@ -725,9 +679,9 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
   doc.text('TOP PERFORMING CONSTITUENCIES', pageW / 2, 180.5, { align: 'center' })
   const top5 = rankedConsts.slice(0, 5)
   top5.forEach((c, i) => {
-    const pct = pctOf(cSum[c.id])
-    const x = 14 + (pageW - 28) / 5 * i
-    const bw = (pageW - 28) / 5
+    const pct = c.overall_pct ?? 0
+    const x   = 14 + (pageW - 28) / 5 * i
+    const bw  = (pageW - 28) / 5
     doc.setFillColor(pct >= 80 ? 22 : pct >= 50 ? 161 : 100, pct >= 80 ? 163 : pct >= 50 ? 98 : 100, pct >= 80 ? 74 : pct >= 50 ? 7 : 100)
     doc.roundedRect(x, 185, bw - 2, 20, 1, 1, 'F')
     doc.setTextColor(255, 255, 255)
@@ -737,12 +691,12 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(6.5)
     doc.setTextColor(220, 220, 220)
-    const name = c.name.length > 14 ? c.name.slice(0, 13) + '…' : c.name
+    const name = c.constituency_name.length > 14 ? c.constituency_name.slice(0, 13) + '…' : c.constituency_name
     doc.text(name, x + (bw - 2) / 2, 202, { align: 'center' })
   })
 
   // ══════════════════════════════════════════════════════════════════════
-  // PAGE 2: EXECUTIVE SUMMARY
+  // PAGE 2: EXECUTIVE SUMMARY — constituency ranking
   // ══════════════════════════════════════════════════════════════════════
   doc.addPage()
   doc.setFillColor(15, 23, 42)
@@ -754,26 +708,19 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(148, 163, 184)
-  doc.text('Constituency Performance Ranking — All Dates Combined', 14, 15)
+  doc.text('Constituency Performance Ranking — Full Season', 14, 15)
 
   const summaryRows = rankedConsts.map((c, idx) => {
-    const pct = pctOf(cSum[c.id])
-    const admin  = admins.find(a => a.constituency_id === c.id)
-    const mCount = monitors.filter(m => m.constituency_id === c.id).length
-    const aCount = agents.filter(a => a.constituency_id === c.id).length
-    const postCount = contents.filter(ct =>
-      ct.target_constituencies == null ||
-      (Array.isArray(ct.target_constituencies) && ct.target_constituencies.includes(c.id))
-    ).length
+    const admin = adminMap[c.constituency_id]
     return [
       String(idx + 1),
-      c.name,
+      c.constituency_name,
       admin?.full_name ?? '—',
-      admin?.phone ?? '—',
-      String(aCount),
-      String(mCount),
-      String(postCount),
-      `${pct}%`,
+      admin?.phone     ?? '—',
+      String(c.agent_count   ?? 0),
+      String(c.monitor_count ?? 0),
+      String(c.total_posts   ?? 0),
+      `${c.overall_pct ?? 0}%`,
     ]
   })
 
@@ -808,24 +755,26 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
   // PER-CONSTITUENCY PAGES
   // ══════════════════════════════════════════════════════════════════════
   for (const c of rankedConsts) {
-    const pct = pctOf(cSum[c.id])
-    const admin        = admins.find(a => a.constituency_id === c.id)
-    const constMons    = monitors.filter(m => m.constituency_id === c.id).sort((a, b) => pctOf(mSum[b.id]) - pctOf(mSum[a.id]))
-    const constAgents  = agents.filter(a => a.constituency_id === c.id)
+    const pct         = c.overall_pct ?? 0
+    const admin       = adminMap[c.constituency_id]
+    const constMons   = monitorStats
+      .filter(m => m.constituency_id === c.constituency_id)
+      .sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
+    const constAgents = agentStats
+      .filter(a => a.constituency_id === c.constituency_id)
 
     doc.addPage()
 
-    // Constituency header bar
+    // Constituency header bar (colour-coded by performance)
     const hFill = pct >= 80 ? [22, 163, 74] : pct >= 50 ? [161, 98, 7] : pct > 0 ? [220, 38, 38] : [71, 85, 105]
     doc.setFillColor(...hFill)
     doc.rect(0, 0, pageW, 24, 'F')
     doc.setTextColor(255, 255, 255)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(14)
-    doc.text(c.name.toUpperCase(), 14, 10)
+    doc.text(c.constituency_name.toUpperCase(), 14, 10)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.setTextColor(255, 255, 255)
     const adminLine = admin
       ? `Admin: ${admin.full_name}${admin.phone ? '   ·   ' + admin.phone : ''}`
       : 'No admin assigned'
@@ -853,17 +802,15 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
       currentY += 8
 
       const monRows = constMons.map(m => {
-        const ms  = mSum[m.id] ?? { wa: 0, fb: 0, ig: 0, slots: 0 }
-        const mp  = pctOf(ms)
-        const slotBase = ms.slots || 1
+        const slots = m.total_slots || 1
         return [
-          m.full_name,
+          m.monitor_name,
           m.phone ?? '—',
-          String(agents.filter(a => a.assigned_monitor_id === m.id).length),
-          `${Math.round(ms.wa / slotBase * 100)}%`,
-          `${Math.round(ms.fb / slotBase * 100)}%`,
-          `${Math.round(ms.ig / slotBase * 100)}%`,
-          `${mp}%`,
+          String(m.agent_count ?? 0),
+          `${Math.round((m.wa_done ?? 0) / slots * 100)}%`,
+          `${Math.round((m.fb_done ?? 0) / slots * 100)}%`,
+          `${Math.round((m.ig_done ?? 0) / slots * 100)}%`,
+          `${m.overall_pct ?? 0}%`,
         ]
       })
 
@@ -904,20 +851,21 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
       doc.text('DIGITAL AGENTS', 14, currentY + 5)
       currentY += 8
 
-      const agentRows = constAgents.map(a => {
-        const st  = agentStats(a.id, a.constituency_id)
-        const mon = monitors.find(m => m.id === a.assigned_monitor_id)
-        return [
+      const agentRows = constAgents
+        .map(a => [
           String(a.booth_number ?? '—'),
-          a.name,
+          a.agent_name,
           a.phone ?? '—',
-          mon?.full_name ?? '—',
-          String(st.wa),
-          String(st.fb),
-          String(st.ig),
-          String(st.total),
-        ]
-      }).sort((x, y) => (parseInt(y[4]) + parseInt(y[5]) + parseInt(y[6])) - (parseInt(x[4]) + parseInt(x[5]) + parseInt(x[6])))
+          monNameMap[a.assigned_monitor_id] ?? '—',
+          String(a.wa_done ?? 0),
+          String(a.fb_done ?? 0),
+          String(a.ig_done ?? 0),
+          String(a.total_applicable_posts ?? 0),
+        ])
+        .sort((x, y) =>
+          (parseInt(y[4]) + parseInt(y[5]) + parseInt(y[6])) -
+          (parseInt(x[4]) + parseInt(x[5]) + parseInt(x[6]))
+        )
 
       autoTable(doc, {
         startY: currentY,
@@ -936,15 +884,14 @@ export function exportManagementReportPDF({ constituencies, constStatsRows, monS
           7: { cellWidth: 16, halign: 'center' },
         },
         didParseCell(data) {
-          // Colour WA/FB/IG cells: green if equal to total, yellow if partial, red if 0
           if (data.section === 'body' && [4, 5, 6].includes(data.column.index)) {
             const val   = parseInt(data.cell.raw) || 0
             const total = parseInt(data.row.cells[7]?.raw ?? data.row.cells[7]?.text?.[0] ?? '0') || 0
             if (total === 0) { data.cell.styles.textColor = [156, 163, 175]; return }
-            if (val === total)      { data.cell.styles.textColor = [22, 163, 74];  data.cell.styles.fontStyle = 'bold' }
+            if (val === total)        { data.cell.styles.textColor = [22, 163, 74];  data.cell.styles.fontStyle = 'bold' }
             else if (val > total / 2) { data.cell.styles.textColor = [161, 98, 7];  data.cell.styles.fontStyle = 'bold' }
-            else if (val > 0)       { data.cell.styles.textColor = [220, 38, 38]; data.cell.styles.fontStyle = 'bold' }
-            else                    { data.cell.styles.textColor = [156, 163, 175] }
+            else if (val > 0)         { data.cell.styles.textColor = [220, 38, 38]; data.cell.styles.fontStyle = 'bold' }
+            else                      { data.cell.styles.textColor = [156, 163, 175] }
           }
         },
         alternateRowStyles: { fillColor: [248, 249, 250] },

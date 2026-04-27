@@ -691,23 +691,42 @@ export default function SuperAdminPage() {
     setExportingMgmt(true)
     try {
       const client = supabaseAdmin ?? supabase
-      const [constStatsRes, monStatsRes, profilesRes, agentsRes, contentsRes, logsRes, constRes] = await Promise.all([
-        client.from('constituency_content_stats').select('constituency_id,total_agents,wa_done,fb_done,ig_done').limit(500000),
-        client.from('monitor_content_stats').select('monitor_id,total_agents,wa_done,fb_done,ig_done').limit(500000),
-        client.from('profiles').select('id,full_name,phone,role,constituency_id').in('role', ['constituency_admin', 'monitor']).limit(10000),
-        client.from('digital_agents').select('id,name,phone,booth_number,constituency_id,assigned_monitor_id').order('booth_number').limit(100000),
-        client.from('daily_content').select('id,content_date,target_constituencies').limit(10000),
-        client.from('compliance_logs').select('agent_id,content_id,platform').eq('is_checked', true).limit(2000000),
-        client.from('constituencies').select('id,name').order('name').limit(1000),
+
+      // Supabase enforces max_rows=1000 per request. Paginate large tables.
+      async function fetchAllRows(createQuery) {
+        const PAGE = 1000
+        const all = []
+        let page = 0
+        while (true) {
+          const { data, error } = await createQuery().range(page * PAGE, (page + 1) * PAGE - 1)
+          if (error) throw error
+          if (!data?.length) break
+          all.push(...data)
+          if (data.length < PAGE) break
+          page++
+        }
+        return all
+      }
+
+      // constituency_season_stats & monitor_season_stats: one row per entity — always <1000
+      // agent_season_stats: one row per agent — may exceed 1000, paginate
+      // admins: small table, one shot
+      const [constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+        client.from('constituency_season_stats').select('*'),
+        client.from('monitor_season_stats').select('*'),
+        fetchAllRows(() => client.from('agent_season_stats').select('*').order('booth_number')),
+        client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
       ])
+
+      if (constStats.error) throw constStats.error
+      if (monitorStats.error) throw monitorStats.error
+      if (adminsRes.error) throw adminsRes.error
+
       exportManagementReportPDF({
-        constituencies:  constRes.data ?? [],
-        constStatsRows:  constStatsRes.data ?? [],
-        monStatsRows:    monStatsRes.data ?? [],
-        profiles:        profilesRes.data ?? [],
-        agents:          agentsRes.data ?? [],
-        contents:        contentsRes.data ?? [],
-        complianceLogs:  logsRes.data ?? [],
+        constStats:   constStats.data ?? [],
+        monitorStats: monitorStats.data ?? [],
+        agentStats:   agentStatsRows,
+        admins:       adminsRes.data ?? [],
       })
     } catch (e) {
       setError(e.message)
