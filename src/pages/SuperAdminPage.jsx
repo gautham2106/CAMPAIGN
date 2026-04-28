@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 import AddContentModal from '../components/AddContentModal'
 import MiniCalendar from '../components/MiniCalendar'
 import * as XLSX from 'xlsx'
-import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF, exportConstituencyPDF, loadPDFFonts } from '../lib/exportUtils'
+import { exportMasterReport, exportPlaceWiseReport, exportPlacePerformanceReport, exportPlacePerformancePDF, exportManagementReportPDF, exportConstituencyPDF, exportManagementReportXLSX, exportConstituencyXLSX, loadPDFFonts } from '../lib/exportUtils'
 
 function CreateConstAdminModal({ constituencies, onCreated, onClose }) {
   const [name, setName] = useState('')
@@ -244,7 +244,9 @@ export default function SuperAdminPage() {
   const [exportingPlacePerf, setExportingPlacePerf] = useState(false)
   const [exportingMgmt, setExportingMgmt] = useState(false)
   const [exportingSeparate, setExportingSeparate] = useState(false)
+  const [exportingMgmtXlsx, setExportingMgmtXlsx] = useState(false)
   const [downloadingConstId, setDownloadingConstId] = useState(null)
+  const [downloadingConstXlsxId, setDownloadingConstXlsxId] = useState(null)
 
   // Places Excel upload
   const [placesUploadConstId, setPlacesUploadConstId] = useState('')
@@ -805,6 +807,64 @@ export default function SuperAdminPage() {
       setError(e.message)
     } finally {
       setDownloadingConstId(null)
+    }
+  }
+
+  async function handleManagementXLSX() {
+    setExportingMgmtXlsx(true)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [constStats, monitorStats, agentStatsRows, adminsRes] = await Promise.all([
+        client.from('constituency_season_stats').select('*'),
+        client.from('monitor_season_stats').select('*'),
+        paginatedFetch(() => client.from('agent_season_stats').select('*').order('booth_number')),
+        client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').limit(1000),
+      ])
+      if (constStats.error) throw constStats.error
+      if (monitorStats.error) throw monitorStats.error
+      if (adminsRes.error) throw adminsRes.error
+      exportManagementReportXLSX({
+        constStats:   constStats.data ?? [],
+        monitorStats: monitorStats.data ?? [],
+        agentStats:   agentStatsRows,
+        admins:       adminsRes.data ?? [],
+      })
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setExportingMgmtXlsx(false)
+    }
+  }
+
+  async function handleConstXLSX(constId) {
+    setDownloadingConstXlsxId(constId)
+    try {
+      const client = supabaseAdmin ?? supabase
+      const [constRes, monRes, agentRows, adminRes] = await Promise.all([
+        client.from('constituency_season_stats').select('*').eq('constituency_id', constId).maybeSingle(),
+        client.from('monitor_season_stats').select('*').eq('constituency_id', constId),
+        paginatedFetch(() => client.from('agent_season_stats').select('*').eq('constituency_id', constId).order('booth_number')),
+        client.from('profiles').select('id,full_name,phone,constituency_id').eq('role', 'constituency_admin').eq('constituency_id', constId).maybeSingle(),
+      ])
+      if (constRes.error) throw constRes.error
+      if (monRes.error) throw monRes.error
+      if (adminRes.error) throw adminRes.error
+      const constBasic = constituencies.find(c => c.id === constId)
+      const constRow = constRes.data ?? {
+        constituency_id: constId,
+        constituency_name: constBasic?.name ?? 'Constituency',
+        agent_count: 0, monitor_count: 0, total_posts: 0, overall_pct: 0,
+      }
+      exportConstituencyXLSX({
+        constRow,
+        monitorStats: monRes.data ?? [],
+        agentStats:   agentRows,
+        admin:        adminRes.data ?? null,
+      })
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setDownloadingConstXlsxId(null)
     }
   }
 
@@ -1449,17 +1509,24 @@ export default function SuperAdminPage() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={handleManagementReport}
-                disabled={exportingMgmt || exportingSeparate || !!downloadingConstId}
+                disabled={exportingMgmt || exportingSeparate || exportingMgmtXlsx || !!downloadingConstId || !!downloadingConstXlsxId}
                 className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
               >
                 {exportingMgmt ? '⏳ Generating…' : '⬇ Combined PDF (all)'}
               </button>
               <button
                 onClick={handleSeparatePDFs}
-                disabled={exportingMgmt || exportingSeparate || !!downloadingConstId}
+                disabled={exportingMgmt || exportingSeparate || exportingMgmtXlsx || !!downloadingConstId || !!downloadingConstXlsxId}
                 className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-500 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
               >
                 {exportingSeparate ? '⏳ Downloading…' : '⬇ All as Separate PDFs'}
+              </button>
+              <button
+                onClick={handleManagementXLSX}
+                disabled={exportingMgmt || exportingSeparate || exportingMgmtXlsx || !!downloadingConstId || !!downloadingConstXlsxId}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
+              >
+                {exportingMgmtXlsx ? '⏳ Generating…' : '⬇ Excel (all)'}
               </button>
             </div>
 
@@ -1468,14 +1535,23 @@ export default function SuperAdminPage() {
               <p className="text-xs text-zinc-400 mb-2 font-semibold uppercase tracking-wide">Download by Constituency</p>
               <div className="flex flex-wrap gap-2">
                 {constituencies.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => handleConstPDF(c.id)}
-                    disabled={exportingMgmt || exportingSeparate || downloadingConstId !== null}
-                    className="px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors bg-zinc-800 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:opacity-50 text-white"
-                  >
-                    {downloadingConstId === c.id ? '⏳ …' : `⬇ ${c.name}`}
-                  </button>
+                  <span key={c.id} className="inline-flex gap-1">
+                    <button
+                      onClick={() => handleConstPDF(c.id)}
+                      disabled={exportingMgmt || exportingSeparate || exportingMgmtXlsx || downloadingConstId !== null || downloadingConstXlsxId !== null}
+                      className="px-3 py-1.5 rounded-l-lg text-sm font-semibold transition-colors bg-zinc-800 hover:bg-indigo-700 disabled:bg-zinc-700 disabled:opacity-50 text-white"
+                    >
+                      {downloadingConstId === c.id ? '⏳' : 'PDF'}
+                    </button>
+                    <button
+                      onClick={() => handleConstXLSX(c.id)}
+                      disabled={exportingMgmt || exportingSeparate || exportingMgmtXlsx || downloadingConstId !== null || downloadingConstXlsxId !== null}
+                      className="px-3 py-1.5 rounded-r-lg text-sm font-semibold transition-colors bg-zinc-700 hover:bg-emerald-700 disabled:bg-zinc-600 disabled:opacity-50 text-white"
+                    >
+                      {downloadingConstXlsxId === c.id ? '⏳' : 'XLS'}
+                    </button>
+                    <span className="px-2 py-1.5 text-sm text-zinc-300">{c.name}</span>
+                  </span>
                 ))}
               </div>
             </div>

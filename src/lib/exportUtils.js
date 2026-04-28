@@ -1193,3 +1193,157 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
 
   doc.save(`campaign_management_report_${new Date().toISOString().slice(0, 10)}.pdf`)
 }
+
+/**
+ * Excel version of the management report — 3 sheets: Summary, Monitors, Agents.
+ * Tamil names render correctly in Excel without any font workarounds.
+ */
+export function exportManagementReportXLSX({ constStats, monitorStats, agentStats, admins }) {
+  const adminMap = {}
+  for (const a of admins) adminMap[a.constituency_id] = a
+
+  const monNameMap = {}
+  for (const m of monitorStats) monNameMap[m.monitor_id] = m.monitor_name
+
+  const today = new Date().toISOString().slice(0, 10)
+  const wb = XLSX.utils.book_new()
+
+  // ── Sheet 1: Constituency summary ──────────────────────────────────────
+  const rankedConsts = [...constStats].sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
+  const summaryData = [
+    ['#', 'Constituency', 'Admin Name', 'Admin Phone', 'Agents', 'Monitors', 'Total Posts', 'Overall %'],
+    ...rankedConsts.map((c, i) => {
+      const admin = adminMap[c.constituency_id]
+      return [
+        i + 1,
+        c.constituency_name,
+        admin?.full_name ?? '—',
+        admin?.phone ?? '—',
+        c.agent_count ?? 0,
+        c.monitor_count ?? 0,
+        c.total_posts ?? 0,
+        `${c.overall_pct ?? 0}%`,
+      ]
+    }),
+  ]
+  const ws1 = XLSX.utils.aoa_to_sheet(summaryData)
+  ws1['!cols'] = [5, 28, 28, 18, 10, 12, 14, 12].map(w => ({ wch: w }))
+  XLSX.utils.book_append_sheet(wb, ws1, 'Constituencies')
+
+  // ── Sheet 2: Monitor stats ──────────────────────────────────────────────
+  const sortedMons = [...monitorStats].sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
+  const monData = [
+    ['Constituency', 'Monitor Name', 'Phone', 'Agents', 'WA Posts', 'FB Posts', 'IG Posts', 'WA %', 'FB %', 'IG %', 'Overall %'],
+    ...sortedMons.map(m => {
+      const slots = m.total_slots || 1
+      return [
+        m.constituency_name ?? '—',
+        m.monitor_name,
+        m.phone ?? '—',
+        m.agent_count ?? 0,
+        m.wa_done ?? 0,
+        m.fb_done ?? 0,
+        m.ig_done ?? 0,
+        `${Math.round((m.wa_done ?? 0) / slots * 100)}%`,
+        `${Math.round((m.fb_done ?? 0) / slots * 100)}%`,
+        `${Math.round((m.ig_done ?? 0) / slots * 100)}%`,
+        `${m.overall_pct ?? 0}%`,
+      ]
+    }),
+  ]
+  const ws2 = XLSX.utils.aoa_to_sheet(monData)
+  ws2['!cols'] = [28, 28, 18, 10, 12, 12, 12, 8, 8, 8, 12].map(w => ({ wch: w }))
+  XLSX.utils.book_append_sheet(wb, ws2, 'Monitors')
+
+  // ── Sheet 3: Agent stats ────────────────────────────────────────────────
+  const sortedAgents = [...agentStats].sort((a, b) => {
+    const ta = (a.wa_done ?? 0) + (a.fb_done ?? 0) + (a.ig_done ?? 0)
+    const tb = (b.wa_done ?? 0) + (b.fb_done ?? 0) + (b.ig_done ?? 0)
+    return tb - ta
+  })
+  const agentData = [
+    ['Constituency', 'Booth #', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total Posts'],
+    ...sortedAgents.map(a => [
+      a.constituency_name ?? '—',
+      a.booth_number ?? '—',
+      a.agent_name,
+      a.phone ?? '—',
+      monNameMap[a.assigned_monitor_id] ?? '—',
+      a.wa_done ?? 0,
+      a.fb_done ?? 0,
+      a.ig_done ?? 0,
+      (a.wa_done ?? 0) + (a.fb_done ?? 0) + (a.ig_done ?? 0),
+    ]),
+  ]
+  const ws3 = XLSX.utils.aoa_to_sheet(agentData)
+  ws3['!cols'] = [28, 8, 28, 18, 28, 10, 10, 10, 12].map(w => ({ wch: w }))
+  XLSX.utils.book_append_sheet(wb, ws3, 'Agents')
+
+  XLSX.writeFile(wb, `campaign_management_report_${today}.xlsx`)
+}
+
+/**
+ * Excel for a single constituency — 2 sheets: Monitors, Agents.
+ */
+export function exportConstituencyXLSX({ constRow, monitorStats, agentStats, admin }) {
+  const monNameMap = {}
+  for (const m of monitorStats) monNameMap[m.monitor_id] = m.monitor_name
+
+  const today = new Date().toISOString().slice(0, 10)
+  const wb = XLSX.utils.book_new()
+
+  // ── Sheet 1: Monitors ──────────────────────────────────────────────────
+  const sortedMons = [...monitorStats].sort((a, b) => (b.overall_pct ?? 0) - (a.overall_pct ?? 0))
+  const monData = [
+    [`${constRow.constituency_name} — Monitor Performance`],
+    admin ? [`Admin: ${admin.full_name}${admin.phone ? '  |  ' + admin.phone : ''}`] : [],
+    [],
+    ['Monitor Name', 'Phone', 'Agents', 'WA Posts', 'FB Posts', 'IG Posts', 'WA %', 'FB %', 'IG %', 'Overall %'],
+    ...sortedMons.map(m => {
+      const slots = m.total_slots || 1
+      return [
+        m.monitor_name,
+        m.phone ?? '—',
+        m.agent_count ?? 0,
+        m.wa_done ?? 0,
+        m.fb_done ?? 0,
+        m.ig_done ?? 0,
+        `${Math.round((m.wa_done ?? 0) / slots * 100)}%`,
+        `${Math.round((m.fb_done ?? 0) / slots * 100)}%`,
+        `${Math.round((m.ig_done ?? 0) / slots * 100)}%`,
+        `${m.overall_pct ?? 0}%`,
+      ]
+    }),
+  ]
+  const ws1 = XLSX.utils.aoa_to_sheet(monData)
+  ws1['!cols'] = [28, 18, 10, 12, 12, 12, 8, 8, 8, 12].map(w => ({ wch: w }))
+  XLSX.utils.book_append_sheet(wb, ws1, 'Monitors')
+
+  // ── Sheet 2: Agents ────────────────────────────────────────────────────
+  const sortedAgents = [...agentStats].sort((a, b) => {
+    const ta = (a.wa_done ?? 0) + (a.fb_done ?? 0) + (a.ig_done ?? 0)
+    const tb = (b.wa_done ?? 0) + (b.fb_done ?? 0) + (b.ig_done ?? 0)
+    return tb - ta
+  })
+  const agentData = [
+    [`${constRow.constituency_name} — Agent Performance`],
+    [],
+    ['Booth #', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total Posts'],
+    ...sortedAgents.map(a => [
+      a.booth_number ?? '—',
+      a.agent_name,
+      a.phone ?? '—',
+      monNameMap[a.assigned_monitor_id] ?? '—',
+      a.wa_done ?? 0,
+      a.fb_done ?? 0,
+      a.ig_done ?? 0,
+      (a.wa_done ?? 0) + (a.fb_done ?? 0) + (a.ig_done ?? 0),
+    ]),
+  ]
+  const ws2 = XLSX.utils.aoa_to_sheet(agentData)
+  ws2['!cols'] = [8, 28, 18, 28, 10, 10, 10, 12].map(w => ({ wch: w }))
+  XLSX.utils.book_append_sheet(wb, ws2, 'Agents')
+
+  const safeName = constRow.constituency_name.replace(/[^a-z0-9]/gi, '_')
+  XLSX.writeFile(wb, `${safeName}_performance_${today}.xlsx`)
+}
