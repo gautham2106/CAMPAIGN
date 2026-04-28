@@ -1202,6 +1202,9 @@ export function exportManagementReportXLSX({ constStats, monitorStats, agentStat
   const adminMap = {}
   for (const a of admins) adminMap[a.constituency_id] = a
 
+  const constNameMap = {}
+  for (const c of constStats) constNameMap[c.constituency_id] = c.constituency_name
+
   const monNameMap = {}
   for (const m of monitorStats) monNameMap[m.monitor_id] = m.monitor_name
 
@@ -1237,7 +1240,7 @@ export function exportManagementReportXLSX({ constStats, monitorStats, agentStat
     ...sortedMons.map(m => {
       const slots = m.total_slots || 1
       return [
-        m.constituency_name ?? '—',
+        constNameMap[m.constituency_id] ?? '—',
         m.monitor_name,
         m.phone ?? '—',
         m.agent_count ?? 0,
@@ -1264,7 +1267,7 @@ export function exportManagementReportXLSX({ constStats, monitorStats, agentStat
   const agentData = [
     ['Constituency', 'Booth #', 'Agent Name', 'Phone', 'Monitor', 'WA Posts', 'FB Posts', 'IG Posts', 'Total Posts'],
     ...sortedAgents.map(a => [
-      a.constituency_name ?? '—',
+      constNameMap[a.constituency_id] ?? '—',
       a.booth_number ?? '—',
       a.agent_name,
       a.phone ?? '—',
