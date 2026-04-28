@@ -474,37 +474,88 @@ export function exportPlacePerformanceReport({ constituencies, agentsMap, monito
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF font helpers — Noto Sans Tamil supports Tamil Unicode + Latin
+// PDF font helpers — Tamil rendered via browser canvas overlay (jsPDF doesn't
+// support Indic scripts natively; FontFace API loads the font for canvas use).
 // ─────────────────────────────────────────────────────────────────────────────
 
-let _fontCache = null
-
-function arrayBufferToBase64(buffer) {
-  let binary = ''
-  const bytes = new Uint8Array(buffer)
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary)
-}
+let _canvasFontReady = false
 
 export async function loadPDFFonts() {
-  // jsPDF's TTF parser doesn't fully support complex Indic scripts yet.
-  // Returning null uses built-in helvetica — PDFs generate reliably.
-  return null
+  if (_canvasFontReady) return
+  try {
+    const [r, b] = await Promise.all([
+      new FontFace('Noto Sans Tamil', 'url(/fonts/NotoSansTamil-Regular.ttf)').load(),
+      new FontFace('Noto Sans Tamil', 'url(/fonts/NotoSansTamil-Bold.ttf)', { weight: 'bold' }).load(),
+    ])
+    document.fonts.add(r)
+    document.fonts.add(b)
+    _canvasFontReady = true
+  } catch (e) {
+    console.warn('Tamil font load failed:', e)
+  }
 }
 
-function setupFont(doc, fonts) {
-  if (!fonts) return false
-  try {
-    doc.addFileToVFS('NotoSansTamil-Regular.ttf', fonts.regular)
-    doc.addFileToVFS('NotoSansTamil-Bold.ttf', fonts.bold)
-    doc.addFont('NotoSansTamil-Regular.ttf', 'Tamil', 'normal')
-    doc.addFont('NotoSansTamil-Bold.ttf', 'Tamil', 'bold')
-    doc.setFont('Tamil', 'normal')
-    return true
-  } catch (e) {
-    console.warn('Tamil font registration failed, using helvetica:', e)
-    return false
+// setupFont kept for signature compatibility — always returns false (F = 'helvetica')
+function setupFont() { return false }
+
+function hasTamil(str) {
+  return /[஀-௿]/.test(String(str ?? ''))
+}
+
+const MM_TO_PX = 3.7795
+
+function drawTamilCell(doc, data) {
+  if (!_canvasFontReady) return
+  const lines = Array.isArray(data.cell.text) ? data.cell.text : [String(data.cell.text ?? '')]
+  const text = lines.join(' ')
+  if (!hasTamil(text)) return
+
+  const { x, y, width, height } = data.cell
+  const styles = data.cell.styles
+  const fontSize = styles.fontSize ?? 8
+  const fontStyle = styles.fontStyle === 'bold' ? 'bold' : 'normal'
+  const padding = typeof styles.cellPadding === 'object'
+    ? (styles.cellPadding.left ?? 2)
+    : (styles.cellPadding ?? 2)
+  const halign = styles.halign ?? 'left'
+
+  const SCALE = 4
+  const canvasW = Math.max(1, Math.ceil(width  * MM_TO_PX * SCALE))
+  const canvasH = Math.max(1, Math.ceil(height * MM_TO_PX * SCALE))
+
+  const canvas = document.createElement('canvas')
+  canvas.width  = canvasW
+  canvas.height = canvasH
+  const ctx = canvas.getContext('2d')
+
+  const fill = styles.fillColor
+  ctx.fillStyle = Array.isArray(fill) ? `rgb(${fill[0]},${fill[1]},${fill[2]})` : '#ffffff'
+  ctx.fillRect(0, 0, canvasW, canvasH)
+
+  const tc = styles.textColor
+  ctx.fillStyle = Array.isArray(tc) ? `rgb(${tc[0]},${tc[1]},${tc[2]})`
+    : typeof tc === 'number' ? `rgb(${tc},${tc},${tc})`
+    : '#1e1e1e'
+
+  const fontPx = fontSize * (96 / 72) * SCALE
+  ctx.font = `${fontStyle} ${fontPx}px "Noto Sans Tamil", sans-serif`
+  ctx.textBaseline = 'middle'
+
+  const paddingPx = padding * MM_TO_PX * SCALE
+  const textY = canvasH / 2
+
+  if (halign === 'center') {
+    ctx.textAlign = 'center'
+    ctx.fillText(text, canvasW / 2, textY)
+  } else if (halign === 'right') {
+    ctx.textAlign = 'right'
+    ctx.fillText(text, canvasW - paddingPx, textY)
+  } else {
+    ctx.textAlign = 'left'
+    ctx.fillText(text, paddingPx, textY)
   }
+
+  doc.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, width, height)
 }
 
 /**
@@ -585,6 +636,7 @@ export function exportPlacePerformancePDF({ constituencyName, date, postTitle, r
         else                { data.cell.styles.textColor = [156, 163, 175] }
       }
     },
+    didDrawCell: (data) => drawTamilCell(doc, data),
     alternateRowStyles: { fillColor: [248, 249, 250] },
     margin: { left: 14, right: 14 },
   })
@@ -711,6 +763,7 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
           data.cell.styles.fontStyle = 'bold'
         }
       },
+      didDrawCell: (data) => drawTamilCell(doc, data),
       alternateRowStyles: { fillColor: [248, 249, 250] },
       margin: { left: 14, right: 14 },
     })
@@ -774,6 +827,7 @@ export function exportConstituencyPDF({ constRow, monitorStats, agentStats, admi
           else                      { data.cell.styles.textColor = [156, 163, 175] }
         }
       },
+      didDrawCell: (data) => drawTamilCell(doc, data),
       alternateRowStyles: { fillColor: [248, 249, 250] },
       margin: { left: 14, right: 14 },
     })
@@ -964,6 +1018,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
         data.cell.styles.fontStyle = 'bold'
       }
     },
+    didDrawCell: (data) => drawTamilCell(doc, data),
     alternateRowStyles: { fillColor: [248, 249, 250] },
     margin: { left: 14, right: 14 },
   })
@@ -1053,6 +1108,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
             data.cell.styles.fontStyle = 'bold'
           }
         },
+        didDrawCell: (data) => drawTamilCell(doc, data),
         alternateRowStyles: { fillColor: [248, 249, 250] },
         margin: { left: 14, right: 14 },
       })
@@ -1116,6 +1172,7 @@ export function exportManagementReportPDF({ constStats, monitorStats, agentStats
             else                      { data.cell.styles.textColor = [156, 163, 175] }
           }
         },
+        didDrawCell: (data) => drawTamilCell(doc, data),
         alternateRowStyles: { fillColor: [248, 249, 250] },
         margin: { left: 14, right: 14 },
       })
